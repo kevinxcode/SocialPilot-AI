@@ -89,7 +89,7 @@ export class RpaPublisher implements Publisher {
         const r = await this.driver.send<EngineResult>(tabId, {
           cmd: 'publish',
           platform: this.platform,
-          input: { text: post.text, files, dryRun: !!opts.dryRun, pageName: acc.name },
+          input: { text: post.text, files, dryRun: !!opts.dryRun, pageName: acc.name, topic: this.platform === 'threads' ? post.topic : undefined },
         });
         if (r.status === 'dry-run') {
           keepOpen = true; // leave the filled composer for the user to inspect

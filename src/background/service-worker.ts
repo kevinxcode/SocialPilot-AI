@@ -1,6 +1,8 @@
 /**
  * Service worker: owns alarms, the publishing queue, autopilot planning and RPA publishers.
  */
+import { topicForPost } from '@/services/content/topics';
+import { aiRouter } from '@/services/ai/AIRouter';
 import { db, log, seedIfEmpty } from '@/services/storage/db';
 import { processDue, recoverOnStartup, schedulePost, type QueueDeps } from '@/services/publishing/PublishingQueue';
 import { publishers } from '@/services/publishing/rpa/RpaPublisher';
@@ -35,6 +37,7 @@ export const deps: QueueDeps = {
   notify: (t, m) => notify(t, m),
   loadMedia,
   runSlot: (item, now) => autopilotHooks.runSlot(item, now, { notify }),
+  pickTopic: async (post) => ((await getSettings()).autoTopic ? topicForPost(post, aiRouter) : undefined),
 };
 
 /** Keeps the worker alive while a long RPA run is in progress. */
@@ -137,6 +140,7 @@ async function handle(msg: SwRequest): Promise<SwResponse> {
         createdAt: now,
         updatedAt: now,
       };
+      if (msg.platform === 'threads' && (await getSettings()).autoTopic) temp.topic = await topicForPost(temp, aiRouter).catch(() => undefined);
       const r = await publishers[msg.platform].publish(temp, await loadMedia(temp.mediaIds), { dryRun: true });
       await log('info', 'dry-run', `${msg.platform}: ${r.status}${'reason' in r && r.reason ? ` — ${r.reason}` : ''}`);
       return r.status === 'dry-run'

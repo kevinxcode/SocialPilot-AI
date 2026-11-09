@@ -5,6 +5,7 @@ import {
   CalendarDays,
   Clock,
   Image,
+  Hash,
   LayoutDashboard,
   Lightbulb,
   Settings as SettingsIcon,
@@ -22,6 +23,7 @@ export type PageId =
   | 'calendar'
   | 'scheduled'
   | 'media'
+  | 'topics'
   | 'accounts'
   | 'analytics'
   | 'brand'
@@ -35,6 +37,7 @@ export const NAV: { id: PageId; icon: LucideIcon }[] = [
   { id: 'calendar', icon: CalendarDays },
   { id: 'scheduled', icon: Clock },
   { id: 'media', icon: Image },
+  { id: 'topics', icon: Hash },
   { id: 'accounts', icon: Share2 },
   { id: 'analytics', icon: BarChart3 },
   { id: 'brand', icon: BookOpen },

@@ -63,6 +63,17 @@ export interface Account {
   lastCheckMessage?: string;
 }
 
+/** A Threads "Community or topic" tag in the master list. id = normalised name. */
+export interface ThreadsTopic {
+  id: string;
+  name: string;
+  source: 'ai' | 'manual';
+  enabled: boolean;
+  uses: number;
+  lastUsedAt?: number;
+  createdAt: number;
+}
+
 /** A Facebook Group the user is a member of. */
 export interface FbGroup {
   id: string;
@@ -116,6 +127,8 @@ export interface Post {
   url?: string;
   /** informational, e.g. "Pending admin approval in the group" */
   note?: string;
+  /** Threads topic / community tag */
+  topic?: string;
   fingerprint: string;
   source: 'manual' | 'autopilot';
   attempts: number;
@@ -197,6 +210,8 @@ export interface Settings {
   groupGapMinutes: number;
   /** pick an image from the Media Library when a post has none */
   autoPickMedia: boolean;
+  /** Threads: let the AI choose a topic for each post */
+  autoTopic: boolean;
   activeBrandId?: string;
   router: {
     mode: RouterMode;

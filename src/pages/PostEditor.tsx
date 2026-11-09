@@ -51,12 +51,14 @@ export function PostEditor({ post, onClose }: { post: Post | null; onClose: () =
   const [text, setText] = useState('');
   const [when, setWhen] = useState('');
   const [mediaIds, setMediaIds] = useState<string[]>([]);
+  const [topic, setTopic] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
 
   useEffect(() => {
     if (!post) return;
     setText(post.text);
     setMediaIds(post.mediaIds);
+    setTopic(post.topic ?? '');
     setWhen(toZonedInput(post.scheduledAt && post.scheduledAt > Date.now() ? post.scheduledAt : Date.now() + 60 * 60_000, tz));
   }, [post, tz]);
   useEffect(() => {
@@ -68,7 +70,7 @@ export function PostEditor({ post, onClose }: { post: Post | null; onClose: () =
   const canEdit = editable(post.status);
   const save = async () => {
     await updatePostText(post.id, text);
-    await db.posts.update(post.id, { mediaIds });
+    await db.posts.update(post.id, { mediaIds, topic: topic.trim() || undefined });
   };
   const run = async (fn: () => Promise<unknown>, okMsg: string) => {
     try {
@@ -110,6 +112,13 @@ export function PostEditor({ post, onClose }: { post: Post | null; onClose: () =
             </Field>
             <MediaPicker value={mediaIds} onChange={setMediaIds} />
           </div>
+          {post.platform === 'threads' && (
+            <div className="mt-2">
+              <Field label="Topic (empty = AI picks one when posting)">
+                <Input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Bisnis Laundry" maxLength={50} />
+              </Field>
+            </div>
+          )}
           <div className="mt-4 flex flex-wrap justify-end gap-2">
             <Button variant="outline" onClick={() => run(save, 'Saved')}>
               Save

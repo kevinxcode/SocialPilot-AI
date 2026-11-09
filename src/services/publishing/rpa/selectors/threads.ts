@@ -21,6 +21,11 @@ export const THREADS: PlatformSelectors = {
   mediaButton: [{ css: 'div[role="button"], button', label: '^(attach media|lampirkan media)$' }],
   fileInput: [{ css: 'input[type="file"]' }],
   mediaPreview: [{ css: 'img[src^="blob:"]' }, { css: 'video' }],
+  topicField: [
+    { css: 'input, [contenteditable="true"]', label: 'community or topic|add a topic|topic|topik|komunitas' },
+    { css: 'span, div[role="button"], div', text: '^(community or topic|add a topic|komunitas atau topik|tambahkan topik)$' },
+  ],
+  topicOption: [{ css: '[role="option"]' }, { css: '[role="listbox"] [role="button"], [role="menu"] [role="menuitem"]' }],
   postButton: [{ css: 'div[role="button"], button', text: '^(post|posting|kirim)$' }],
   postContainer: 'div[data-pressable-container="true"]',
   permalink: '/@[^/]+/post/[A-Za-z0-9_-]+',

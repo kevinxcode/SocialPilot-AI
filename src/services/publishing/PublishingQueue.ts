@@ -22,6 +22,8 @@ export interface QueueDeps {
   loadMedia: (ids: string[]) => Promise<Blob[]>;
   /** autopilot slot runner (Task 13); slot items are ignored when absent */
   runSlot?: (item: QueueItem, now: number) => Promise<void>;
+  /** Threads: choose a topic for a post that has none (AI); undefined = no topic */
+  pickTopic?: (post: Post) => Promise<string | undefined>;
 }
 
 export function zonedToUtc(local: string, timezone: string): Date {
@@ -205,6 +207,14 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   if (dup) {
     await fail(item, post, `Duplicate of a post published ${new Date(dup.publishedAt!).toLocaleString()}`, deps);
     return;
+  }
+
+  if (post.platform === 'threads' && !post.topic && deps.pickTopic) {
+    const topic = await deps.pickTopic(post).catch(() => undefined);
+    if (topic) {
+      post.topic = topic;
+      await setPost(post.id, { topic });
+    }
   }
 
   const attempts = post.attempts + 1;

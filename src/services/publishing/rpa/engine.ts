@@ -22,8 +22,10 @@ export interface PublishInput {
   files: { name: string; type: string; dataUrl: string }[];
   dryRun: boolean;
   pageName?: string;
+  /** Threads topic / community tag; best effort */
+  topic?: string;
 }
-export type EngineResult = { status: 'clicked'; pending?: boolean } | { status: 'dry-run' } | { status: 'unknown'; reason: string } | { status: 'failed'; reason: string };
+export type EngineResult = { status: 'clicked'; pending?: boolean; topicSet?: boolean } | { status: 'dry-run' } | { status: 'unknown'; reason: string } | { status: 'failed'; reason: string };
 
 const T = (o: EngineOpts, ms: number) => Math.min(ms, o.timeoutMs ?? ms);
 
@@ -132,6 +134,8 @@ export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o:
       reason: `Text could not be entered exactly into the composer (expected ${input.text.replace(/\s+/g, ' ').trim().length} chars, editor shows ${seen.length}: "${seen.slice(0, 80)}…")`,
     };
   }
+  let topicSet: boolean | undefined;
+  if (input.topic && cfg.topicField) topicSet = await setTopic(cfg, dialog, box, input.topic, o);
   if (input.dryRun) return { status: 'dry-run' };
 
   await humanDelay(d, 800, 1600);
@@ -157,7 +161,7 @@ export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o:
     if (cfg.pendingNotice && (await waitFor(() => findBySelectors(cfg.pendingNotice), T(o, 4000), o.pollMs))) {
       return { status: 'clicked', pending: true };
     }
-    return { status: 'clicked' };
+    return { status: 'clicked', topicSet };
   } catch (e) {
     return { status: 'unknown', reason: `Error after clicking Post: ${(e as Error).message}` };
   }
@@ -179,4 +183,50 @@ export async function runFindExisting(cfg: PlatformSelectors, fp: string, o: Eng
   if (!hit) return { found: false };
   const a = Array.from(hit.querySelectorAll<HTMLAnchorElement>('a[href]')).find((x) => re.test(x.getAttribute('href') ?? ''));
   return { found: true, url: a ? new URL(a.getAttribute('href')!, location.origin).toString().replace(/\?.*$/, '') : undefined };
+}
+
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/** Fills the Threads "Community or topic" field. Best effort: returns false and moves on if the UI differs. */
+export async function setTopic(cfg: PlatformSelectors, dialog: Element, box: Element, topic: string, o: EngineOpts = {}): Promise<boolean> {
+  try {
+    const field = findBySelectors(cfg.topicField, dialog);
+    if (!field) return false;
+    click(field);
+    const editable = await waitFor(
+      () => {
+        const a = document.activeElement as HTMLElement | null;
+        if (a && a !== box && (a.tagName === 'INPUT' || a.isContentEditable)) return a;
+        const f = field as HTMLElement;
+        return f.tagName === 'INPUT' || f.isContentEditable ? f : null;
+      },
+      T(o, 3000),
+      o.pollMs,
+    );
+    if (!editable) return false;
+    editable.focus();
+    if (editable.tagName === 'INPUT') {
+      const inp = editable as HTMLInputElement;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(inp, topic);
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+    } else if (!document.execCommand('insertText', false, topic)) {
+      editable.textContent = topic;
+      editable.dispatchEvent(new InputEvent('input', { bubbles: true, data: topic }));
+    }
+    const want = norm(topic);
+    const option = await waitFor(
+      () => {
+        const opts = (cfg.topicOption ?? []).flatMap((s) => [...document.querySelectorAll<HTMLElement>(s.css)]);
+        if (!opts.length) return null;
+        return opts.find((el) => norm(el.textContent ?? '').includes(want)) ?? opts[0];
+      },
+      T(o, 5000),
+      o.pollMs,
+    );
+    if (option) click(option);
+    else editable.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    return true;
+  } catch {
+    return false;
+  }
 }

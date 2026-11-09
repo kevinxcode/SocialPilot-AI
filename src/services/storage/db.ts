@@ -7,7 +7,7 @@ import type {
   Brand,
   BrandKnowledge,
   ContentIdea,
-  FbGroup,
+  FbGroup, ThreadsTopic,
   MediaItem,
   Post,
   ProviderStatus,
@@ -28,6 +28,7 @@ export class SocialPilotDB extends Dexie {
   aiUsage!: Table<AIUsage, string>;
   logs!: Table<ActivityLog, string>;
   groups!: Table<FbGroup, string>;
+  topics!: Table<ThreadsTopic, string>;
 
   constructor() {
     super('socialpilot');
@@ -45,6 +46,7 @@ export class SocialPilotDB extends Dexie {
       logs: 'id, at, level',
     });
     this.version(2).stores({ groups: 'id, enabled', posts: 'id, status, scheduledAt, platform, fingerprint, createdAt, publishedAt, groupId' });
+    this.version(3).stores({ topics: 'id, enabled, uses' });
   }
 }
 
@@ -63,6 +65,7 @@ export const TABLES = [
   'aiUsage',
   'logs',
   'groups',
+  'topics',
 ] as const;
 export type TableName = (typeof TABLES)[number];
 

@@ -31,6 +31,10 @@ export interface PlatformSelectors {
   fileInput: Sel[];
   mediaPreview: Sel[];
   nextButton?: Sel[];
+  /** Threads: "Community or topic" field next to the author name */
+  topicField?: Sel[];
+  /** suggestions shown after typing a topic */
+  topicOption?: Sel[];
   postButton: Sel[];
   /** containers holding one post each in the profile/page feed */
   postContainer: string;

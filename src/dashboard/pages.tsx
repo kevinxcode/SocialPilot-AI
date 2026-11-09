@@ -7,6 +7,7 @@ import { BrandKnowledgePage } from '@/pages/BrandKnowledge';
 import { ContentStudioPage } from '@/pages/ContentStudio';
 import { ResearchPage } from '@/pages/Research';
 import { MediaLibraryPage } from '@/pages/MediaLibrary';
+import { TopicsPage } from '@/pages/Topics';
 import { SocialAccountsPage } from '@/pages/SocialAccounts';
 import { ScheduledPostsPage } from '@/pages/ScheduledPosts';
 import { CalendarPage } from '@/pages/Calendar';
@@ -22,6 +23,7 @@ export const PAGES: Partial<Record<PageId, Render>> = {
   studio: () => <ContentStudioPage />,
   research: () => <ResearchPage />,
   media: () => <MediaLibraryPage />,
+  topics: () => <TopicsPage />,
   accounts: () => <SocialAccountsPage />,
   scheduled: () => <ScheduledPostsPage />,
   calendar: () => <CalendarPage />,
