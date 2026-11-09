@@ -40,6 +40,12 @@ export const DEFAULT_SETTINGS: Settings = {
     reviewWindowMinutes: 0,
     ctaLink: true,
     learnFromEngagement: true,
+    dailySummary: true,
+    bestTimes: true,
+    recycle: true,
+    aiImagePick: true,
+    ownReplies: true,
+    ownRepliesPerDay: 10,
   },
 };
 

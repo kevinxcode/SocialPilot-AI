@@ -186,3 +186,18 @@ test('best-performing Threads posts are fed into the next prompt', async () => {
   const prompt = ((r.generate.mock.calls[0] as unknown[])[0] as { messages: { content: string }[] }).messages[1].content;
   expect(prompt).toMatch(/engagement 42\] Nota hilang/);
 });
+
+test('no trending idea → a proven old winner is rewritten with a new angle and marked recycled', async () => {
+  await db.posts.add({
+    id: 'win', platform: 'threads', accountId: 'at', text: 'Nota hilang? Ini cara simpel mencatat order https://cuciqu.com/?utm_source=threads', mediaIds: [], status: 'published', fingerprint: 'win',
+    source: 'autopilot', attempts: 1, createdAt: 0, updatedAt: 0, publishedAt: slot().runAt - 40 * 86_400_000, engagement: 25,
+  });
+  await db.queue.add(slot());
+  const r = router([variation('Kelola laundry lebih rapi dengan CuciQu Pro, supaya semua pesanan tercatat dan kamu tidak perlu repot cari nota lagi.')]);
+  await runSlot(slot(), slot().runAt, ctx(r));
+  const prompt = ((r.generate.mock.calls[0] as unknown[])[0] as { messages: { content: string }[] }).messages[1].content;
+  expect(prompt).toMatch(/fresh angle/);
+  expect(prompt).toMatch(/Nota hilang\? Ini cara simpel/);
+  expect(prompt).not.toMatch(/utm_source/);
+  expect((await db.posts.get('win'))?.recycledAt).toBe(slot().runAt);
+});

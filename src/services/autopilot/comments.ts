@@ -16,7 +16,7 @@ export function commentBudget(s: Settings, posts: Post[], now: number): boolean 
   if (!s.comments.enabled || !s.autopilot.enabled || s.autopilot.paused || !s.autopilot.platforms.threads) return false;
   const hm = formatInTimeZone(now, s.timezone, 'HH:mm');
   if (hm < s.autopilot.windowStart || hm >= s.autopilot.windowEnd) return false;
-  const replies = posts.filter((p) => p.replyTo);
+  const replies = posts.filter((p) => p.replyTo && p.replyKind !== 'own'); // replies on our own posts have their own budget
   if (replies.some((p) => ['scheduled', 'processing', 'verifying'].includes(p.status))) return false;
   const today = formatInTimeZone(now, s.timezone, 'yyyy-MM-dd');
   const count = replies.filter((p) => formatInTimeZone(p.createdAt, s.timezone, 'yyyy-MM-dd') === today).length;

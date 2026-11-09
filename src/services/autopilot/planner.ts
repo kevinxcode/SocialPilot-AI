@@ -4,6 +4,7 @@ import { db, log } from '@/services/storage/db';
 import { getSettings } from '@/services/storage/settings';
 import { uid } from '@/lib/utils';
 import type { Platform, QueueItem, Settings } from '@/types/models';
+import { bestMinutes, slotMinutes } from './insights';
 
 const PLANNED_KEY = 'autopilotPlanned';
 
@@ -16,17 +17,17 @@ const toMinutes = (hhmm: string) => {
  * Slots for one day (yyyy-MM-dd in the settings timezone): N posts spread evenly across the
  * window (centred in N equal segments). Facebook follows each Threads slot by the configured offset.
  */
-export function planDay(date: string, s: Settings): QueueItem[] {
+export function planDay(date: string, s: Settings, best: number[] | null = null): QueueItem[] {
   const a = s.autopilot;
   if (!a.enabled || a.paused || a.postsPerDay < 1) return [];
   const start = toMinutes(a.windowStart);
   const end = Math.max(toMinutes(a.windowEnd), start + 1);
-  const seg = (end - start) / a.postsPerDay;
+  const minutes = slotMinutes(a.postsPerDay, start, end, best);
   const dayIndex = Math.floor(Date.parse(`${date}T00:00:00Z`) / 86_400_000);
   const types = a.contentTypes.length ? a.contentTypes : ['educational'];
   const out: QueueItem[] = [];
   for (let i = 0; i < a.postsPerDay; i++) {
-    const minute = Math.round(start + (i + 0.5) * seg);
+    const minute = minutes[i];
     const hh = String(Math.floor(minute / 60)).padStart(2, '0');
     const mm = String(minute % 60).padStart(2, '0');
     const base = fromZonedTime(`${date}T${hh}:${mm}:00`, s.timezone).getTime();
@@ -60,9 +61,14 @@ export async function ensurePlanned(now: number): Promise<number> {
   const today = formatInTimeZone(now, s.timezone, 'yyyy-MM-dd');
   const tomorrow = formatInTimeZone(addDays(now, 1), s.timezone, 'yyyy-MM-dd');
   let added = 0;
+  // Learned best hours (Threads engagement); null until there is enough data.
+  const best =
+    s.autopilot.bestTimes !== false
+      ? bestMinutes(await db.posts.where('platform').equals('threads').toArray(), s.timezone, toMinutes(s.autopilot.windowStart), toMinutes(s.autopilot.windowEnd), now)
+      : null;
   for (const day of [today, tomorrow]) {
     if (done.has(day)) continue;
-    const slots = planDay(day, s).filter((q) => q.runAt > now);
+    const slots = planDay(day, s, best).filter((q) => q.runAt > now);
     await db.transaction('rw', db.queue, async () => {
       for (const q of slots) {
         const exists = await db.queue

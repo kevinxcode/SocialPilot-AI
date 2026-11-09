@@ -6,6 +6,8 @@ import { formatInTimeZone } from 'date-fns-tz';
 import { maybeDailyTrending, researchTrending } from '@/services/content/trending';
 import { scrapeJoinedGroups, scrapeThreadsProfile, scrapeThreadsSearch } from '@/services/publishing/rpa/RpaPublisher';
 import { refreshEngagement } from '@/services/analytics/engagement';
+import { ownReplies } from '@/services/autopilot/ownReplies';
+import { dailySummary } from '@/services/autopilot/insights';
 /**
  * Service worker: owns alarms, the publishing queue, autopilot planning and RPA publishers.
  */
@@ -89,6 +91,20 @@ async function dailyEngagement() {
   await refreshEngagement(() => scrapeThreadsProfile(acc.profileUrl!), now);
 }
 
+const SUMMARY_DAY_KEY = 'summaryLastDay';
+/** Once a day, after the autopilot window ends: a notification with the day's results. */
+async function dailySummaryNotice() {
+  const s = await getSettings();
+  if (s.autopilot.dailySummary === false || !s.autopilot.enabled) return;
+  const now = Date.now();
+  if (formatInTimeZone(now, s.timezone, 'HH:mm') < s.autopilot.windowEnd) return;
+  const day = formatInTimeZone(now, s.timezone, 'yyyy-MM-dd');
+  if ((await chrome.storage.local.get(SUMMARY_DAY_KEY))[SUMMARY_DAY_KEY] === day) return;
+  await chrome.storage.local.set({ [SUMMARY_DAY_KEY]: day });
+  const sum = dailySummary(await db.posts.toArray(), day, s.timezone);
+  if (sum) notify(sum.title, sum.message, 'summary');
+}
+
 let ticking: Promise<void> | null = null;
 let tickStartedAt = 0;
 /** A run that hangs (e.g. a stuck browser API call) must not block the queue forever. */
@@ -106,6 +122,9 @@ export function tick(): Promise<void> {
       if (fixed) await log('warn', 'queue', `Re-queued ${fixed} scheduled posts that had lost their queue entry`);
       await processDue(Date.now(), deps);
       await automaticComments().catch((e: Error) => log('warn', 'comments', e.message));
+      if (!(await db.queue.where('runAt').belowOrEqual(Date.now()).count()))
+        await ownReplies(Date.now(), { router: aiRouter, scrape: (u) => scrapeThreadsProfile(u, 30) }).catch((e: Error) => log('warn', 'replies', e.message));
+      await dailySummaryNotice().catch((e: Error) => log('warn', 'summary', e.message));
       await dailyTrending();
       await dailyEngagement().catch((e: Error) => log('warn', 'analytics', `Engagement refresh failed: ${e.message}`));
     } catch (e) {

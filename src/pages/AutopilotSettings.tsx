@@ -104,6 +104,40 @@ export function AutopilotSettings() {
             <Switch checked={a.learnFromEngagement !== false} onChange={(v) => set({ learnFromEngagement: v })} label="Learn from engagement" />
           </div>
         </Field>
+        <Field label="Post at the best hours (learned from engagement)">
+          <div className="flex h-9 items-center">
+            <Switch checked={a.bestTimes !== false} onChange={(v) => set({ bestTimes: v })} label="Best hours" />
+          </div>
+        </Field>
+        <Field label="Recycle top posts older than 30 days (new angle)">
+          <div className="flex h-9 items-center">
+            <Switch checked={a.recycle !== false} onChange={(v) => set({ recycle: v })} label="Recycle top posts" />
+          </div>
+        </Field>
+        <Field label="AI picks the image that fits the text">
+          <div className="flex h-9 items-center">
+            <Switch checked={a.aiImagePick !== false} onChange={(v) => set({ aiImagePick: v })} label="AI image pick" />
+          </div>
+        </Field>
+        <Field label="Daily summary notification (after the window ends)">
+          <div className="flex h-9 items-center">
+            <Switch checked={a.dailySummary !== false} onChange={(v) => set({ dailySummary: v })} label="Daily summary" />
+          </div>
+        </Field>
+        <Field label="Reply to comments on our own Threads posts (per day)">
+          <div className="flex h-9 items-center gap-2">
+            <Switch checked={a.ownReplies !== false} onChange={(v) => set({ ownReplies: v })} label="Reply to comments" />
+            <Input
+              type="number"
+              min={1}
+              max={20}
+              className="w-20"
+              value={a.ownRepliesPerDay ?? 10}
+              onChange={(e) => set({ ownRepliesPerDay: Math.max(1, Math.min(20, Number(e.target.value) || 1)) })}
+              aria-label="Replies per day"
+            />
+          </div>
+        </Field>
         <div className="md:col-span-2">
           <Field label="Autopilot model (free / local unless paid is allowed)">
             <Select

@@ -147,6 +147,10 @@ export interface Post {
   /** Threads only: likes + replies + reposts read from the profile (never estimated) */
   engagement?: number;
   engagementAt?: number;
+  /** set when this post was used as the base of a recycled post */
+  recycledAt?: number;
+  /** 'own': a reply to a comment on the brand's own post (not counted as an outreach comment) */
+  replyKind?: 'own';
   createdAt: number;
   updatedAt: number;
 }
@@ -217,6 +221,17 @@ export interface AutopilotSettings {
   ctaLink?: boolean;
   /** daily: read own Threads profile engagement and reuse the best angles */
   learnFromEngagement?: boolean;
+  /** notification with the day's results after the window ends */
+  dailySummary?: boolean;
+  /** move half the slots to the hours with the best engagement */
+  bestTimes?: boolean;
+  /** rewrite top posts older than 30 days with a fresh angle */
+  recycle?: boolean;
+  /** let the AI choose the image that matches the post text */
+  aiImagePick?: boolean;
+  /** reply to comments on the brand's own Threads posts */
+  ownReplies?: boolean;
+  ownRepliesPerDay?: number;
 }
 
 export interface Settings {
