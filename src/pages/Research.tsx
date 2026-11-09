@@ -258,6 +258,7 @@ export function ResearchPage() {
             >
               <option value="threads">Threads</option>
               <option value="facebook">Facebook Page</option>
+              <option value="fbgroup">Facebook Groups (rotating)</option>
             </Select>
             <Button
               disabled={!sel.size || queuing !== null}

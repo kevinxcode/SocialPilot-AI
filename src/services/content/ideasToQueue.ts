@@ -35,7 +35,9 @@ export async function queueIdeas(
 ): Promise<{ queued: number; failed: string[] }> {
   const s = await getSettings();
   const now = opts.now ?? Date.now();
-  const gapMs = s.minGapMinutes * 60_000;
+  const groups = opts.platform === 'fbgroup' ? (await db.groups.toArray()).filter((g) => g.enabled) : [];
+  if (opts.platform === 'fbgroup' && !groups.length) throw new Error('No enabled Facebook Group — switch some on in Grup Facebook first');
+  const gapMs = (opts.platform === 'fbgroup' ? s.groupGapMinutes : s.minGapMinutes) * 60_000;
   // Start after everything already scheduled/published on this platform.
   const existing = await db.posts.where('platform').equals(opts.platform).toArray();
   const latest = Math.max(
@@ -54,6 +56,8 @@ export async function queueIdeas(
     const brandId = idea.brandId ?? s.activeBrandId ?? (await db.brands.toCollection().first())?.id;
     try {
       if (!brandId) throw new Error('No brand');
+      // Groups: rotate through enabled groups, one post per group (the queue enforces max 1 per group per 24 h).
+      const group = groups.length ? groups[queued % groups.length] : undefined;
       const out = await generateVariations(
         {
           brandId,
@@ -66,6 +70,7 @@ export async function queueIdeas(
           tone: '',
           cta: '',
           hashtags: '',
+          extra: group ? `Facebook Group "${group.name}".${group.rules ? ` Group rules you MUST follow: ${group.rules}` : ''} Write a helpful community post, no hard selling.` : undefined,
         },
         1,
         { router: opts.router, purpose: 'interactive' },
@@ -73,7 +78,7 @@ export async function queueIdeas(
       const text = out[0]?.caption ?? '';
       const v = await validatePost(text, opts.platform, brandId);
       if (!v.ok) throw new Error(v.errors.join('; '));
-      const post = await createDraft({ platform: opts.platform, text, brandId, title: idea.title, contentType: 'educational' });
+      const post = await createDraft({ platform: opts.platform, text, brandId, title: idea.title, contentType: 'educational', groupId: group?.id });
       await schedulePost(post.id, new Date(times[queued]));
       queued++;
       opts.onProgress?.(queued);
