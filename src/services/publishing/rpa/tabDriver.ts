@@ -56,11 +56,23 @@ chrome.tabs?.onRemoved?.addListener((id) => {
   closeWaiters.get(id)?.();
 });
 
+/** Chrome refuses tab edits while the user drags a tab; wait and retry instead of failing the post. */
+export async function retryTabEdit<T>(fn: () => Promise<T>, tries = 20, waitMs = 500): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (i >= tries || !/cannot be edited right now|dragging/i.test((e as Error).message)) throw e;
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+}
+
 /** Puts the tab into a "SocialPilot" tab group so it sits apart from the user's tabs. */
 async function groupTab(tabId: number): Promise<void> {
   try {
     if (!chrome.tabGroups) return;
-    const groupId = await chrome.tabs.group({ tabIds: [tabId] });
+    const groupId = await retryTabEdit(() => chrome.tabs.group({ tabIds: [tabId] }));
     await chrome.tabGroups.update(groupId, { title: 'SocialPilot', color: 'blue', collapsed: false });
   } catch {
     /* grouping is cosmetic */
@@ -93,12 +105,12 @@ export const TabDriver = {
     if (tabId != null && closedTabs.has(tabId)) throw new TabClosedError();
     if (await tabAlive(tabId)) {
       const done = waitComplete(tabId!);
-      await chrome.tabs.update(tabId!, { url });
+      await retryTabEdit(() => chrome.tabs.update(tabId!, { url }));
       await done;
-      if (opts.focus) await chrome.tabs.update(tabId!, { active: true });
+      if (opts.focus) await retryTabEdit(() => chrome.tabs.update(tabId!, { active: true }));
     } else {
       // A tab next to the user's tabs (not a popup window), opened in the background.
-      const t = await chrome.tabs.create({ url, active: !!opts.focus });
+      const t = await retryTabEdit(() => chrome.tabs.create({ url, active: !!opts.focus }));
       tabId = t.id;
       if (tabId == null) throw new Error('Could not open automation tab');
       await groupTab(tabId);
@@ -138,6 +150,11 @@ export const TabDriver = {
       // The message channel breaks when the tab goes away; report that as a user close.
       throw closedTabs.has(tabId) ? new TabClosedError() : e;
     }).finally(off);
+  },
+
+  async focus(tabId: number): Promise<void> {
+    await retryTabEdit(() => chrome.tabs.update(tabId, { active: true })).catch(() => undefined);
+    await sleep(800);
   },
 
   async close(): Promise<void> {

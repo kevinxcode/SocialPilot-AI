@@ -17,6 +17,8 @@ export interface Driver {
   open(url: string, opts?: { focus?: boolean }): Promise<number>;
   send<T>(tabId: number, msg: unknown, timeoutMs?: number): Promise<T>;
   close(): Promise<void>;
+  /** bring the automation tab to the front (Facebook's composer does not open in a throttled background tab) */
+  focus?(tabId: number): Promise<void>;
 }
 
 export class RpaPublisher implements Publisher {
@@ -85,6 +87,7 @@ export class RpaPublisher implements Publisher {
         const files = await Promise.all(
           media.map(async (b, i) => ({ name: `media-${i + 1}.${(b.type.split('/')[1] ?? 'bin').replace('jpeg', 'jpg')}`, type: b.type, dataUrl: await blobToDataUrl(b) })),
         );
+        if (this.platform !== 'threads') await this.driver.focus?.(tabId);
         commandSent = !opts.dryRun;
         const r = await this.driver.send<EngineResult>(tabId, {
           cmd: 'publish',
