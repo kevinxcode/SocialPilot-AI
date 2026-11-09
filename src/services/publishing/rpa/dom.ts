@@ -71,8 +71,19 @@ export function readEditorText(el: Element): string {
 
 const norm = (s: string) => s.replace(/\r/g, '').replace(/\u00a0/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 
+/** Content equality ignoring whitespace/line-break rendering differences (missing or duplicated text still fails). */
+const squash = (s: string) => norm(s).replace(/\s+/g, '');
 export function editorMatches(el: Element, text: string): boolean {
-  return norm(readEditorText(el)) === norm(text);
+  return squash(readEditorText(el)) === squash(text);
+}
+
+async function settled(h: HTMLElement, text: string, ms: number): Promise<boolean> {
+  const end = Date.now() + ms;
+  for (;;) {
+    if (editorMatches(h, text)) return true;
+    if (Date.now() >= end) return false;
+    await sleep(100);
+  }
 }
 
 function clearEditor(h: HTMLElement) {
@@ -106,8 +117,8 @@ export async function typeText(el: Element, text: string): Promise<boolean> {
     const dt = new DataTransfer();
     dt.setData('text/plain', text);
     h.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-    await sleep(150);
-    if (editorMatches(h, text)) return true;
+    // Rich editors apply the paste asynchronously — wait for it instead of typing a second copy.
+    if (await settled(h, text, 2000)) return true;
   } catch {
     /* DataTransfer/ClipboardEvent unavailable */
   }
@@ -120,8 +131,7 @@ export async function typeText(el: Element, text: string): Promise<boolean> {
       if (i > 0) ok = document.execCommand('insertLineBreak') || document.execCommand('insertParagraph') || ok;
       if (line) ok = document.execCommand('insertText', false, line) && ok;
     });
-    await sleep(150);
-    if (editorMatches(h, text)) return true;
+    if (await settled(h, text, 1500)) return true;
   }
 
   // 3) direct DOM (non-framework editors)

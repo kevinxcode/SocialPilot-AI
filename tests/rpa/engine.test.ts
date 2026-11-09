@@ -156,3 +156,16 @@ test('composer already open (Threads intent URL) → no opener needed, text type
   expect(r).toEqual({ status: 'clicked' });
   expect(onPost).toHaveBeenCalledTimes(1);
 });
+
+test('editor check tolerates Lexical paragraph/blank-line rendering but rejects missing or duplicated text', async () => {
+  const { editorMatches } = await import('@/services/publishing/rpa/dom');
+  const text = 'Catatan kertas bikin pusing? 🧺\n\nCuciQu Pro hadir.\n\n#CuciQuPro #TipsLaundry';
+  document.body.innerHTML =
+    '<div contenteditable="true" role="textbox"><p dir="auto"><span>Catatan kertas bikin pusing? 🧺</span></p><p><br></p><p><br></p><p><span>CuciQu Pro hadir.</span></p><p><br></p><p><a href="/search?q=CuciQuPro">#CuciQuPro</a> <a>#TipsLaundry</a></p></div>';
+  const el = document.querySelector('[contenteditable]')!;
+  expect(editorMatches(el, text)).toBe(true);
+  el.insertAdjacentHTML('beforeend', '<p>Catatan kertas bikin pusing? 🧺</p>');
+  expect(editorMatches(el, text)).toBe(false);
+  el.innerHTML = '<p>Catatan kertas bikin pusing? 🧺</p>';
+  expect(editorMatches(el, text)).toBe(false);
+});

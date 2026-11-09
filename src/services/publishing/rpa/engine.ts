@@ -3,7 +3,7 @@
  * Pure DOM logic (no chrome.* APIs) so it is unit-testable against fixtures.
  */
 import { normalizeText } from '../fingerprint';
-import { attachFiles, click, dataUrlToFile, findBySelectors, humanDelay, typeText, waitFor } from './dom';
+import { attachFiles, click, dataUrlToFile, findBySelectors, humanDelay, readEditorText, typeText, waitFor } from './dom';
 import type { PlatformSelectors } from './selectors/types';
 
 export interface EngineOpts {
@@ -115,7 +115,13 @@ export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o:
 
   await humanDelay(d);
   const typed = await typeText(box, input.text);
-  if (!typed) return { status: 'failed', reason: 'Text could not be entered exactly into the composer' };
+  if (!typed) {
+    const seen = readEditorText(box).replace(/\s+/g, ' ').trim();
+    return {
+      status: 'failed',
+      reason: `Text could not be entered exactly into the composer (expected ${input.text.replace(/\s+/g, ' ').trim().length} chars, editor shows ${seen.length}: "${seen.slice(0, 80)}…")`,
+    };
+  }
   if (input.dryRun) return { status: 'dry-run' };
 
   await humanDelay(d, 800, 1600);
