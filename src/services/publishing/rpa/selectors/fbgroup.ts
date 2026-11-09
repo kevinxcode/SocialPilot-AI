@@ -16,7 +16,7 @@ export const FBGROUP: PlatformSelectors = {
   pendingNotice: [
     {
       css: '[role="alert"], [role="status"], [role="dialog"], span, div',
-      text: '(pending approval|pending admin|submitted for admin approval|menunggu persetujuan|dikirim ke admin|akan ditinjau)',
+      text: '(pending approval|pending admin|is pending|awaiting approval|submitted for (admin )?(approval|review)|admins? will review|menunggu persetujuan|menunggu tinjauan|dikirim ke admin|akan ditinjau|ditinjau oleh admin)',
     },
   ],
   permalink: '/groups/[^/]+/(posts|permalink)/',

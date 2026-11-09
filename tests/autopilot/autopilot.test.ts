@@ -201,3 +201,18 @@ test('no trending idea → a proven old winner is rewritten with a new angle and
   expect(prompt).not.toMatch(/utm_source/);
   expect((await db.posts.get('win'))?.recycledAt).toBe(slot().runAt);
 });
+
+test('Threads and Facebook of the same slot recycle the same winner', async () => {
+  const old = slot().runAt - 40 * 86_400_000;
+  await db.posts.bulkAdd([
+    { id: 'w1', platform: 'threads', accountId: 'at', text: 'Winner one tentang nota hilang', mediaIds: [], status: 'published', fingerprint: 'w1', source: 'autopilot', attempts: 1, createdAt: 0, updatedAt: 0, publishedAt: old, engagement: 30 },
+    { id: 'w2', platform: 'threads', accountId: 'at', text: 'Winner two tentang setrika', mediaIds: [], status: 'published', fingerprint: 'w2', source: 'autopilot', attempts: 1, createdAt: 0, updatedAt: 0, publishedAt: old, engagement: 20 },
+  ]);
+  const ok = 'Kelola laundry lebih rapi dengan CuciQu Pro, supaya semua pesanan tercatat dan kamu tidak perlu repot cari nota lagi.';
+  const r = router([variation(ok)]);
+  await runSlot(slot('threads'), slot().runAt, ctx(r));
+  await runSlot({ ...slot('facebook'), id: 'q2' }, slot().runAt + 30 * MIN, ctx(r));
+  const prompts = (r.generate.mock.calls as unknown[][]).map((c) => (c[0] as { messages: { content: string }[] }).messages[1].content);
+  expect(prompts.filter((p) => /Winner one/.test(p))).toHaveLength(2);
+  expect(prompts.some((p) => /Winner two/.test(p))).toBe(false);
+});

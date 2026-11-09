@@ -67,7 +67,9 @@ export async function runSlot(item: QueueItem, now: number, ctx: RunnerCtx): Pro
   const ideas = (await db.ideas.where('brandId').equals(brandId).toArray()).filter((i) => !i.kind.startsWith('trending'));
   const trending = s.trendingResearch ? await takeTrendingIdea(brandId, now) : undefined;
   // No fresh trend → reuse a proven winner (>30 days old) with a new angle, else rotate saved ideas.
-  const recycled = !trending && item.platform !== 'fbgroup' && a.recycle !== false ? pickRecyclable(await db.posts.toArray(), 'threads', now) : undefined;
+  // Threads and Facebook of the same slot share one winner (whichever runs first picks it).
+  const all = !trending && item.platform !== 'fbgroup' && a.recycle !== false ? await db.posts.toArray() : [];
+  const recycled = all.length ? (all.find((p) => item.slotKey && p.recycledSlot === item.slotKey) ?? pickRecyclable(all, 'threads', now)) : undefined;
   const idea =
     trending ??
     (recycled
@@ -148,7 +150,7 @@ export async function runSlot(item: QueueItem, now: number, ctx: RunnerCtx): Pro
   const review = a.reviewWindowMinutes > 0;
   await schedulePost(post.id, new Date(review ? now + a.reviewWindowMinutes * 60_000 : now));
   await db.queue.delete(item.id);
-  if (recycled) await db.posts.update(recycled.id, { recycledAt: now });
+  if (recycled && !recycled.recycledAt) await db.posts.update(recycled.id, { recycledAt: now, recycledSlot: item.slotKey });
   await log('info', 'autopilot', `${label(item.platform)} post generated for slot ${item.slotKey}${recycled ? ' (recycled winner)' : ''}${review ? ` (review window ${a.reviewWindowMinutes} min)` : ''}`);
   if (review) {
     ctx.notify(

@@ -177,3 +177,12 @@ test('findTopicField finds the topic hint via placeholder attribute or text', as
   document.body.innerHTML = '<div id="d"><div role="button"><span>Community or topic</span></div></div>';
   expect(findTopicField(document.getElementById('d')!)?.getAttribute('role')).toBe('button');
 });
+
+test('findExisting recognises a post cut off by "See more"', async () => {
+  const { runFindExisting } = await import('@/services/publishing/rpa/engine');
+  const { fingerprint } = await import('@/services/publishing/fingerprint');
+  const full = 'Mau ambil alih laundry yang untung? Yuk, lihat cara mudahnya! Banyak pemilik laundry baru';
+  document.body.innerHTML = '<div role="article"><span>Mau ambil alih laundry yang untung? Yuk, lihat cara mudahnya!... See more</span></div>';
+  const cfg = { postContainer: 'div[role="article"]', permalink: '/posts/' } as never;
+  expect((await runFindExisting(cfg, fingerprint(full), { timeoutScale: 0.01, pollMs: 5 } as never)).found).toBe(true);
+});

@@ -179,7 +179,7 @@ export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o:
   try {
     const closed = await waitFor(() => !document.contains(dialog) || (dialog as HTMLElement).getAttribute('aria-hidden') === 'true', T(o, 60_000), o.pollMs);
     if (!closed) return { status: 'unknown', reason: 'Composer did not close after clicking Post' };
-    if (cfg.pendingNotice && (await waitFor(() => findBySelectors(cfg.pendingNotice), T(o, 4000), o.pollMs))) {
+    if (cfg.pendingNotice && (await waitFor(() => findBySelectors(cfg.pendingNotice), T(o, 8000), o.pollMs))) {
       return { status: 'clicked', pending: true };
     }
     return { status: 'clicked', topicSet, topicIssue };
@@ -193,8 +193,12 @@ export async function runFindExisting(cfg: PlatformSelectors, fp: string, o: Eng
   const re = new RegExp(cfg.permalink);
   const hit = await waitFor(
     () => {
+      // Facebook cuts long posts with "See more", so the full 60-char fingerprint may not be on the page:
+      // also accept its first 40 characters (still specific enough to identify our own post).
+      const short = fp.slice(0, 40).trim();
       for (const c of Array.from(document.querySelectorAll(cfg.postContainer))) {
-        if (normalizeText(c.textContent ?? '').includes(fp)) return c;
+        const t = normalizeText(c.textContent ?? '');
+        if (t.includes(fp) || (short.length >= 25 && t.includes(short))) return c;
       }
       return null;
     },

@@ -4,7 +4,7 @@
  * - best posting hours learned from Threads engagement
  * - best old posts to recycle with a fresh angle
  */
-import { formatInTimeZone } from 'date-fns-tz';
+import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
 import { platformLabel } from '@/lib/platform';
 import type { Post } from '@/types/models';
 
@@ -24,7 +24,7 @@ export function dailySummary(posts: Post[], day: string, tz: string): { title: s
     .map(([pl, n]) => `${platformLabel(pl)} ${n}`)
     .join(', ');
   const best = posts
-    .filter((p) => p.status === 'published' && !p.replyTo && (p.engagement ?? 0) > 0 && (p.publishedAt ?? 0) > Date.parse(`${day}T00:00:00Z`) - 7 * DAY)
+    .filter((p) => p.status === 'published' && !p.replyTo && (p.engagement ?? 0) > 0 && (p.publishedAt ?? 0) > fromZonedTime(`${day}T00:00:00`, tz).getTime() - 7 * DAY)
     .sort((a, b) => (b.engagement ?? 0) - (a.engagement ?? 0))[0];
   const lines = [
     `${own.length} published${per ? ` (${per})` : ''}${replies ? `, ${replies} replies` : ''}, ${failed.length} failed.`,
@@ -68,6 +68,7 @@ export function slotMinutes(n: number, start: number, end: number, best: number[
   for (const m of best) if (out.length < Math.ceil(n / 2) && far(m)) out.push(m);
   for (const m of even) if (out.length < n && far(m)) out.push(m);
   for (const m of even) if (out.length < n && !out.includes(m)) out.push(m); // tiny windows: accept closer slots
+  for (const m of even) if (out.length < n) out.push(m); // window shorter than n minutes: same-minute slots
   return out.sort((a, b) => a - b);
 }
 

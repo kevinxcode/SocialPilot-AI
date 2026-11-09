@@ -125,3 +125,42 @@ describe('replies to comments on our own posts', () => {
     expect(scrape).not.toHaveBeenCalled();
   });
 });
+
+test('a window shorter than the slot count never yields invalid slot minutes', () => {
+  const m = slotMinutes(5, 540, 542, null);
+  expect(m).toHaveLength(5);
+  expect(m.every(Number.isFinite)).toBe(true);
+});
+
+describe('own replies: page trust and one reply per person', () => {
+  const parentUrl = 'https://www.threads.com/@cuciqu.pro/post/AAA';
+  beforeEach(async () => {
+    await db.brands.add({ ...CUCIQU_SEED, id: 'b1', createdAt: 0, updatedAt: 0 });
+    await db.accounts.add({ id: 'a', platform: 'threads', name: 'cuciqu.pro', profileUrl: 'https://www.threads.com/@cuciqu.pro' });
+    await updateSettings({ activeBrandId: 'b1', autopilot: { enabled: true, windowStart: '09:00', windowEnd: '19:00' } });
+    await db.posts.add(post('p', { url: parentUrl, publishedAt: NOW - 3600_000, text: 'Tips nota laundry' }));
+  });
+  const router = () => ({ generate: vi.fn(async () => ({ text: 'Bisa kak, coba saja dulu ya.', providerId: 'ollama' as const, modelId: 'm' })) });
+
+  test('our post missing from the page → nothing is answered', async () => {
+    const r = router();
+    const n = await ownReplies(NOW, { router: r as never, scrape: async () => [{ text: 'random thread', url: 'https://www.threads.com/@x/post/X', engagement: 0 }] });
+    expect(n).toBe(0);
+    expect(r.generate).not.toHaveBeenCalled();
+  });
+
+  test('items before our post are ignored and each person gets one reply per scan', async () => {
+    const r = router();
+    const n = await ownReplies(NOW, {
+      router: r as never,
+      scrape: async () => [
+        { text: 'suggested before', url: 'https://www.threads.com/@z/post/Z', engagement: 0 },
+        { text: 'Tips nota laundry', url: parentUrl, engagement: 1 },
+        { text: 'budi first', url: 'https://www.threads.com/@budi/post/B1', engagement: 0 },
+        { text: 'budi second', url: 'https://www.threads.com/@budi/post/B2', engagement: 0 },
+      ],
+    });
+    expect(n).toBe(1);
+    expect((await db.posts.toArray()).find((p) => p.replyKind === 'own')?.replyTo).toBe('https://www.threads.com/@budi/post/B1');
+  });
+});

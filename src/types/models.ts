@@ -149,6 +149,8 @@ export interface Post {
   engagementAt?: number;
   /** set when this post was used as the base of a recycled post */
   recycledAt?: number;
+  /** autopilot slotKey that recycled this post (Threads + Facebook of that slot share it) */
+  recycledSlot?: string;
   /** 'own': a reply to a comment on the brand's own post (not counted as an outreach comment) */
   replyKind?: 'own';
   createdAt: number;

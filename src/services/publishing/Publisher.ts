@@ -12,7 +12,7 @@ export interface Publisher {
   platform: Platform;
   preflight(acc: Account): Promise<{ ok: boolean; reason?: string }>;
   publish(post: Post, media: Blob[], opts: { dryRun?: boolean }): Promise<PublishResult>;
-  findExisting(post: Pick<Post, 'fingerprint' | 'platform' | 'groupId' | 'replyTo'>): Promise<{ found: boolean; url?: string }>;
+  findExisting(post: Pick<Post, 'fingerprint' | 'platform' | 'groupId' | 'replyTo'>): Promise<{ found: boolean; url?: string; pending?: boolean }>;
 }
 
 /** Messages exchanged between service worker and the RPA content script. */

@@ -352,3 +352,34 @@ test('a group post that keeps failing moves once to another group; ambiguous one
   await processDue(T0 + 3 * 60 * MIN, deps(fakePublisher([{ status: 'failed', reason: 'Post button not found' }])));
   expect((await db.posts.get('p1'))?.status).toBe('failed');
 });
+
+test('replies do not hold up normal posts, and the same short reply to different comments is not a duplicate', async () => {
+  await addPost('r1', { text: 'Terima kasih kak!', fingerprint: 'tk', replyTo: 'https://www.threads.com/@a/post/1', status: 'published', publishedAt: T0 - 60_000 });
+  await addPost('r2', { text: 'Terima kasih kak!', fingerprint: 'tk', replyTo: 'https://www.threads.com/@b/post/2' });
+  await addPost('root', {});
+  await schedulePost('r2', new Date(T0 + 11 * MIN));
+  await schedulePost('root', new Date(T0));
+  const pub = fakePublisher([{ status: 'published' }], [{ found: true, url: 'https://www.threads.com/@x/post/9' }]);
+  await processDue(T0, deps(pub));
+  expect((await db.posts.get('root'))?.status).toBe('published'); // the reply 1 min ago did not defer it
+  await processDue(T0 + 11 * MIN, deps(pub));
+  expect((await db.posts.get('r2'))?.status).not.toBe('failed'); // not rejected as a duplicate of r1
+});
+
+test('an unclear group post is never resent; found on the pending page → published as pending', async () => {
+  await db.groups.add({ id: 'g1', name: 'G', url: 'https://www.facebook.com/groups/1', rules: '', enabled: true });
+  await addPost('p1', { platform: 'fbgroup', groupId: 'g1' });
+  await schedulePost('p1', new Date(T0));
+  const pub = fakePublisher([{ status: 'unknown', reason: 'Composer did not close' }], [{ found: false }]);
+  await processDue(T0, deps(pub));
+  expect((await db.posts.get('p1'))?.status).toBe('verifying');
+  // Next check: still not visible → keeps checking, never publishes again.
+  await processDue(T0 + 3 * 60 * MIN, deps(pub));
+  expect(pub.calls).toBe(1);
+  expect((await db.posts.get('p1'))?.status).toBe('verifying');
+  // Then it shows up among the pending posts.
+  const later = fakePublisher([{ status: 'published' }], [{ found: true, pending: true } as never]);
+  await processDue(T0 + 6 * 60 * MIN, deps(later));
+  expect(later.calls).toBe(0);
+  expect(await db.posts.get('p1')).toMatchObject({ status: 'published', note: expect.stringMatching(/admin approval/) });
+});

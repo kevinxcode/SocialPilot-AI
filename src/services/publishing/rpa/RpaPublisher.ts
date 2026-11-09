@@ -114,6 +114,7 @@ export class RpaPublisher implements Publisher {
         const found = post.replyTo
           ? await this.driver.send<{ found: boolean; url?: string }>(tabId, { cmd: 'findReply', targetUrl: post.replyTo, profileUrl: acc.profileUrl, fingerprint: post.fingerprint })
           : await this.confirm(acc, post.fingerprint);
+        if (found.found && 'pending' in found && found.pending) return { status: 'published', note: 'Pending admin approval in the group' };
         if (found.found) return { status: 'published', url: found.url, ...(post.topic && r.status === 'clicked' && r.topicSet === false ? { note: `Topic "${post.topic}" not set: ${r.topicIssue ?? 'Threads UI'}` } : {}) };
         return { status: 'unknown', reason: r.status === 'unknown' ? r.reason : 'Post not yet visible on the profile/page feed' };
       } catch (e) {
@@ -135,11 +136,20 @@ export class RpaPublisher implements Publisher {
     });
   }
 
-  private async confirm(acc: Account, fp: string): Promise<{ found: boolean; url?: string }> {
+  /** Feed check. Groups: posts waiting for admin approval are only visible on "my pending content". */
+  private async lookFor(acc: Account, fp: string): Promise<{ found: boolean; url?: string; pending?: boolean }> {
+    const tabId = await this.driver.open(acc.profileUrl);
+    const r = await this.driver.send<{ found: boolean; url?: string }>(tabId, { cmd: 'findExisting', platform: this.platform, fingerprint: fp });
+    if (r.found || this.platform !== 'fbgroup') return r;
+    const pendingTab = await this.driver.open(`${acc.profileUrl.replace(/\/$/, '')}/my_pending_content`);
+    const p = await this.driver.send<{ found: boolean; url?: string }>(pendingTab, { cmd: 'findExisting', platform: this.platform, fingerprint: fp });
+    return p.found ? { found: true, pending: true } : { found: false };
+  }
+
+  private async confirm(acc: Account, fp: string): Promise<{ found: boolean; url?: string; pending?: boolean }> {
     const end = Date.now() + this.confirmWindowMs;
     do {
-      const tabId = await this.driver.open(acc.profileUrl);
-      const r = await this.driver.send<{ found: boolean; url?: string }>(tabId, { cmd: 'findExisting', platform: this.platform, fingerprint: fp });
+      const r = await this.lookFor(acc, fp);
       if (r.found) return r;
       if (Date.now() + 15_000 > end) break;
       await new Promise((res) => setTimeout(res, 15_000));
@@ -152,11 +162,13 @@ export class RpaPublisher implements Publisher {
       try {
         const acc = await this.target(post);
         if (post.replyTo && !canonicalThreadUrl(post.replyTo)) throw new Error('Invalid reply target');
-        const tabId = await this.driver.open(post.replyTo ?? acc.profileUrl);
-        if (post.replyTo) return await this.driver.send<{ found: boolean; url?: string }>(tabId, {
-          cmd: 'findReply', targetUrl: post.replyTo, profileUrl: acc.profileUrl, fingerprint: post.fingerprint,
-        });
-        return await this.driver.send<{ found: boolean; url?: string }>(tabId, { cmd: 'findExisting', platform: this.platform, fingerprint: post.fingerprint });
+        if (post.replyTo) {
+          const tabId = await this.driver.open(post.replyTo);
+          return await this.driver.send<{ found: boolean; url?: string }>(tabId, {
+            cmd: 'findReply', targetUrl: post.replyTo, profileUrl: acc.profileUrl, fingerprint: post.fingerprint,
+          });
+        }
+        return await this.lookFor(acc, post.fingerprint);
       } finally {
         await this.driver.close();
       }

@@ -14,6 +14,10 @@ export const PUBLISH_LOCK_MS = 15 * 60_000;
 export const MISSED_TOLERANCE_MS = 5 * 60_000;
 export const SKIP_LATE_MS = 2 * 60 * 60_000;
 const DEDUPE_MS = 7 * 24 * 60 * 60_000;
+/** Minimum gap between two replies (replies don't count toward the gap of normal posts). */
+const REPLY_GAP_MINUTES = 10;
+/** Duplicates only matter in the same place: root posts vs root posts, a reply vs replies to the same comment. */
+const sameTarget = (a: Post, b: Post) => (a.replyTo ?? '') === (b.replyTo ?? '');
 const DAY_MS = 24 * 60 * 60_000;
 
 export interface QueueDeps {
@@ -212,7 +216,7 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   // Ambiguous previous attempt (unknown result, or a run that died mid-publish): look before (re)posting.
   const ambiguous = post.status === 'verifying' || post.status === 'processing';
   if (ambiguous) {
-    let f: { found: boolean; url?: string };
+    let f: { found: boolean; url?: string; pending?: boolean };
     try {
       f = await pub.findExisting(post);
     } catch (e) {
@@ -227,11 +231,20 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     }
     if (f.found) {
       await markPublished(item, post, now, f.url, deps);
+      if (f.pending) await setPost(post.id, { note: 'Pending admin approval in the group' });
       return;
     }
-    // A missing visible reply is not proof it was never submitted (collapsed/moderated replies).
-    if (post.replyTo) {
-      await setPost(post.id, { status: 'verifying', error: 'Reply not yet visible; automatic resend disabled to prevent duplicates', nextRetryAt: now + 30 * 60_000 });
+    // A missing reply / group post is not proof it was never submitted (collapsed replies, admin moderation):
+    // never resend automatically — check again a few times, then ask the user to look.
+    if (post.replyTo || post.platform === 'fbgroup') {
+      const checks = post.attempts + 1;
+      if (checks > MAX_ATTEMPTS) {
+        await setPost(post.id, { status: 'failed', error: 'Not found after several checks. It may be waiting for admin approval — check the group before posting again.' });
+        await finish(item.id);
+        await log('warn', 'publish', `${label(post.platform)}: not confirmed; not resent to avoid duplicates`);
+        return;
+      }
+      await setPost(post.id, { status: 'verifying', attempts: checks, error: `${post.replyTo ? 'Reply' : 'Group post'} not yet visible; automatic resend disabled to prevent duplicates`, nextRetryAt: now + 30 * 60_000 });
       await release(item.id, now + 30 * 60_000);
       return;
     }
@@ -242,7 +255,9 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   }
 
   // Minimum gap between posts on the same platform (groups: shorter gap across groups, max 1 per group per 24 h).
-  const last = await db.posts.where('platform').equals(post.platform).filter((p) => p.status === 'published' && !!p.publishedAt).reverse().sortBy('publishedAt');
+  // Replies and root posts keep separate gaps, so replies to comments never hold up scheduled posts.
+  const isReply = !!post.replyTo;
+  const last = await db.posts.where('platform').equals(post.platform).filter((p) => p.status === 'published' && !!p.publishedAt && !!p.replyTo === isReply).reverse().sortBy('publishedAt');
   if (post.platform === 'fbgroup') {
     const sameGroup = last.find((p) => p.groupId === post.groupId);
     if (sameGroup && now - sameGroup.publishedAt! < DAY_MS) {
@@ -252,7 +267,7 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     }
   }
   const lastAt = last[0]?.publishedAt ?? 0;
-  const gapMs = (post.platform === 'fbgroup' ? groupGapMinutes : minGapMinutes) * 60_000;
+  const gapMs = (isReply ? REPLY_GAP_MINUTES : post.platform === 'fbgroup' ? groupGapMinutes : minGapMinutes) * 60_000;
   if (lastAt && now - lastAt < gapMs && !item.immediate) {
     await setPost(post.id, { nextRetryAt: lastAt + gapMs, error: `Waiting: min ${gapMs / 60_000} min gap after the last ${label(post.platform)} post` });
     await release(item.id, lastAt + gapMs);
@@ -264,7 +279,7 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   const pendingTwin = await db.posts
     .where('fingerprint')
     .equals(post.fingerprint)
-    .filter((p) => p.id !== post.id && p.platform === post.platform && (p.status === 'verifying' || p.status === 'processing'))
+    .filter((p) => p.id !== post.id && p.platform === post.platform && sameTarget(p, post) && (p.status === 'verifying' || p.status === 'processing'))
     .first();
   if (pendingTwin) {
     await release(item.id, now + 5 * 60_000);
@@ -276,7 +291,7 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   const dup = await db.posts
     .where('fingerprint')
     .equals(post.fingerprint)
-    .filter((p) => p.id !== post.id && p.platform === post.platform && p.status === 'published' && (p.publishedAt ?? 0) > now - DEDUPE_MS)
+    .filter((p) => p.id !== post.id && p.platform === post.platform && sameTarget(p, post) && p.status === 'published' && (p.publishedAt ?? 0) > now - DEDUPE_MS)
     .first();
   if (dup) {
     await fail(item, post, `Duplicate of a post published ${new Date(dup.publishedAt!).toLocaleString()}`, deps);
