@@ -185,12 +185,28 @@ export async function runFindExisting(cfg: PlatformSelectors, fp: string, o: Eng
   return { found: true, url: a ? new URL(a.getAttribute('href')!, location.origin).toString().replace(/\?.*$/, '') : undefined };
 }
 
+const TOPIC_RE = /community or topic|add a topic|komunitas atau topik|tambahkan topik/i;
+
+/** Fallback: the topic field may show its hint via placeholder / aria / data attributes or a pseudo-element. */
+export function findTopicField(dialog: Element): HTMLElement | null {
+  const els = Array.from(dialog.querySelectorAll<HTMLElement>('*'));
+  for (const el of els) {
+    for (const a of ['placeholder', 'aria-placeholder', 'data-placeholder', 'aria-label']) {
+      if (TOPIC_RE.test(el.getAttribute(a) ?? '')) return el;
+    }
+  }
+  // innermost element whose own text is the hint
+  const textHits = els.filter((el) => TOPIC_RE.test((el.textContent ?? '').trim()) && (el.textContent ?? '').trim().length < 40);
+  const inner = textHits.find((el) => !textHits.some((o) => o !== el && el.contains(o)));
+  return inner ? ((inner.closest('[role="button"], [contenteditable="true"], input') as HTMLElement | null) ?? inner) : null;
+}
+
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 /** Fills the Threads "Community or topic" field. Best effort: returns false and moves on if the UI differs. */
 export async function setTopic(cfg: PlatformSelectors, dialog: Element, box: Element, topic: string, o: EngineOpts = {}): Promise<boolean> {
   try {
-    const field = findBySelectors(cfg.topicField, dialog);
+    const field = findBySelectors(cfg.topicField, dialog) ?? findTopicField(dialog);
     if (!field) return false;
     click(field);
     const editable = await waitFor(

@@ -99,7 +99,7 @@ export class RpaPublisher implements Publisher {
         if (r.status === 'clicked' && r.pending) return { status: 'published', note: 'Pending admin approval in the group' };
         // clicked or unknown: confirm on the feed before claiming success
         const found = await this.confirm(acc, post.fingerprint);
-        if (found.found) return { status: 'published', url: found.url };
+        if (found.found) return { status: 'published', url: found.url, ...(post.topic && r.status === 'clicked' && r.topicSet === false ? { note: `Topic "${post.topic}" could not be set (Threads UI)` } : {}) };
         return { status: 'unknown', reason: r.status === 'unknown' ? r.reason : 'Post not yet visible on the profile/page feed' };
       } catch (e) {
         // Before the publish command nothing can have been posted → failed.

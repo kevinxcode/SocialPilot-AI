@@ -169,3 +169,11 @@ test('editor check tolerates Lexical paragraph/blank-line rendering but rejects 
   el.innerHTML = '<p>Catatan kertas bikin pusing? 🧺</p>';
   expect(editorMatches(el, text)).toBe(false);
 });
+
+test('findTopicField finds the topic hint via placeholder attribute or text', async () => {
+  const { findTopicField } = await import('@/services/publishing/rpa/engine');
+  document.body.innerHTML = '<div id="d"><span>cuciqu.app</span><div contenteditable="true" aria-placeholder="Community or topic"></div></div>';
+  expect(findTopicField(document.getElementById('d')!)?.getAttribute('aria-placeholder')).toBe('Community or topic');
+  document.body.innerHTML = '<div id="d"><div role="button"><span>Community or topic</span></div></div>';
+  expect(findTopicField(document.getElementById('d')!)?.getAttribute('role')).toBe('button');
+});

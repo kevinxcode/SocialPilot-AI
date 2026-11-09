@@ -214,6 +214,9 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     if (topic) {
       post.topic = topic;
       await setPost(post.id, { topic });
+      await log('info', 'topic', `Threads topic: ${topic}`);
+    } else {
+      await log('warn', 'topic', 'No topic chosen (AI unavailable and the topic list is empty)');
     }
   }
 
