@@ -14,6 +14,7 @@ import { ScheduledPostsPage } from '@/pages/ScheduledPosts';
 import { CalendarPage } from '@/pages/Calendar';
 import { DashboardPage } from '@/pages/Dashboard';
 import { AnalyticsPage } from '@/pages/Analytics';
+import { CloudPage } from '@/pages/Cloud';
 
 type Render = (navigate: (p: PageId) => void) => ReactNode;
 
@@ -31,4 +32,5 @@ export const PAGES: Partial<Record<PageId, Render>> = {
   calendar: () => <CalendarPage />,
   dashboard: (navigate) => <DashboardPage navigate={navigate} />,
   analytics: () => <AnalyticsPage />,
+  cloud: () => <CloudPage />,
 };

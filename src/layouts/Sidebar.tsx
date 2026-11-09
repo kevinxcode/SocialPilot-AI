@@ -4,6 +4,7 @@ import {
   Bot,
   CalendarDays,
   Clock,
+  Cloud,
   Image,
   Hash,
   Users,
@@ -30,6 +31,7 @@ export type PageId =
   | 'analytics'
   | 'brand'
   | 'providers'
+  | 'cloud'
   | 'settings';
 
 export const NAV: { id: PageId; icon: LucideIcon }[] = [
@@ -45,6 +47,7 @@ export const NAV: { id: PageId; icon: LucideIcon }[] = [
   { id: 'analytics', icon: BarChart3 },
   { id: 'brand', icon: BookOpen },
   { id: 'providers', icon: Bot },
+  { id: 'cloud', icon: Cloud },
   { id: 'settings', icon: SettingsIcon },
 ];
 

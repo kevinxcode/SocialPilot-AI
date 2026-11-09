@@ -7,6 +7,11 @@ import { maybeDailyTrending, researchTrending } from '@/services/content/trendin
 import { scrapeJoinedGroups, scrapeThreadsProfile, scrapeThreadsSearch } from '@/services/publishing/rpa/RpaPublisher';
 import { refreshEngagement } from '@/services/analytics/engagement';
 import { ownReplies } from '@/services/autopilot/ownReplies';
+import { installSyncHooks, markSettingsDirty, syncNow } from '@/services/cloud/sync';
+import { holdsPublisherLease } from '@/services/cloud/leader';
+import { mediaBlob } from '@/services/cloud/drive';
+
+installSyncHooks();
 import { dailySummary } from '@/services/autopilot/insights';
 /**
  * Service worker: owns alarms, the publishing queue, autopilot planning and RPA publishers.
@@ -38,8 +43,10 @@ function notify(title: string, message: string, id?: string, buttons?: { title: 
 }
 
 async function loadMedia(ids: string[]): Promise<Blob[]> {
-  const items = await db.media.bulkGet(ids);
-  return items.filter((m): m is NonNullable<typeof m> => !!m).map((m) => m.blob);
+  const items = (await db.media.bulkGet(ids)).filter((m): m is NonNullable<typeof m> => !!m);
+  // A file synced from another device is downloaded from Google Drive the first time it is needed.
+  const blobs = await Promise.all(items.map((m) => mediaBlob(m)));
+  return blobs.filter((b): b is Blob => !!b);
 }
 
 export const deps: QueueDeps = {
@@ -117,6 +124,9 @@ export function tick(): Promise<void> {
   const stop = keepAlive();
   ticking = (async () => {
     try {
+      // Cloud: sync first, then only the device holding the publisher lease posts (never two browsers at once).
+      await syncNow();
+      if (!(await holdsPublisherLease())) return;
       await autopilotHooks.ensurePlanned(Date.now());
       await removeDuplicates(Date.now());
       const fixed = await repairOrphans(Date.now());
@@ -162,6 +172,7 @@ chrome.notifications.onButtonClicked.addListener((id, idx) => {
 // Re-plan autopilot slots whenever its settings change (pause/resume, cadence, windows…).
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes.settings) return;
+  markSettingsDirty(changes.settings.newValue);
   type S = { providers?: { ollama?: { baseUrl?: string } } } | undefined;
   const oldHost = (changes.settings.oldValue as S)?.providers?.ollama?.baseUrl;
   const newHost = (changes.settings.newValue as S)?.providers?.ollama?.baseUrl;

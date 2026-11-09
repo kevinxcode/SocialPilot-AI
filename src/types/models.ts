@@ -93,7 +93,10 @@ export interface MediaItem {
   name: string;
   type: string;
   size: number;
-  blob: Blob;
+  /** local copy; may be missing on a device that has not downloaded it from Google Drive yet */
+  blob?: Blob;
+  /** Google Drive file id (cloud sync) */
+  driveFileId?: string;
   thumb?: string;
   tags: string[];
   category?: string;

@@ -2,7 +2,11 @@ import { defineManifest } from '@crxjs/vite-plugin';
 
 import { PERMISSIONS, HOST_PERMISSIONS } from './src/manifestPermissions';
 
+// Same extension ID on every laptop (needed for the Google sign-in redirect): set EXTENSION_KEY when building.
+const key = process.env.EXTENSION_KEY?.trim();
+
 export default defineManifest({
+  ...(key ? { key } : {}),
   manifest_version: 3,
   name: 'SocialPilot AI',
   version: '0.1.0',
