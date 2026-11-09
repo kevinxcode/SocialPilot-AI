@@ -1,3 +1,4 @@
+import { getSettings } from '@/services/storage/settings';
 /**
  * Daily trending research: read the most engaged Threads posts for the brand's topics and turn them into
  * fresh post ideas (saved as ideas of kind "trending", which autopilot uses first).
@@ -39,6 +40,7 @@ export async function researchTrending(
 ): Promise<TrendingIdea[]> {
   const queries = (await enabledTopics()).slice(0, 3);
   if (!queries.length) queries.push('bisnis laundry', 'UMKM');
+  const lang = (await getSettings()).autopilot.language === 'en' ? 'English' : 'Bahasa Indonesia';
   const results = await deps.scrape(queries);
   const top = results
     .flatMap((r) => r.posts.map((p) => ({ ...p, query: r.query })))
@@ -54,7 +56,7 @@ export async function researchTrending(
       {
         role: 'system',
         content:
-          'You are a social media strategist. From the trending Threads posts below, propose 6 ORIGINAL post ideas for the brand, each on a different angle that is currently getting engagement. Never copy text. One idea per line exactly as: TITLE | ANGLE (one sentence) | TOPIC (1-3 words, no #).',
+          `You are a social media strategist. From the trending Threads posts below, propose 6 ORIGINAL post ideas for the brand, each on a different angle that is currently getting engagement. Never copy text. Write everything in ${lang}. One idea per line exactly as: TITLE | ANGLE (one sentence) | TOPIC (1-3 words, no #).`,
       },
       {
         role: 'user',

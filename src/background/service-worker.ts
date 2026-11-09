@@ -1,4 +1,4 @@
-import { IDEA_JOB_KEY, runIdeaJob, type IdeaJob } from '@/services/content/ideasToQueue';
+import { IDEA_JOB_KEY, jobIsLive, runIdeaJob, type IdeaJob } from '@/services/content/ideasToQueue';
 import { cleanGroupName } from '@/services/publishing/rpa/engine';
 import { automaticComments } from '@/services/autopilot/comments';
 import { uid } from '@/lib/utils';
@@ -183,13 +183,18 @@ async function handle(msg: SwRequest): Promise<SwResponse> {
     }
     case 'queueIdeas': {
       const cur = (await chrome.storage.local.get(IDEA_JOB_KEY))[IDEA_JOB_KEY] as IdeaJob | undefined;
-      if (cur?.running && Date.now() - cur.startedAt < 60 * 60_000) return { ok: false, message: 'A queue job is already running' };
+      if (jobIsLive(cur)) return { ok: false, message: 'A queue job is already running — wait, or press Stop' };
       const stop = keepAlive();
       void runIdeaJob(msg.ids, msg.platforms, msg.removeAfter, aiRouter)
         .then((j) => notify('Ideas queued', `Scheduled ${j.queued} posts${j.failed.length ? `, ${j.failed.length} failed` : ''}`))
         .catch((e: Error) => log('error', 'research', e.message))
         .finally(stop);
       return { ok: true, message: 'Started in the background' };
+    }
+    case 'stopIdeaJob': {
+      const cur = (await chrome.storage.local.get(IDEA_JOB_KEY))[IDEA_JOB_KEY] as IdeaJob | undefined;
+      if (cur) await chrome.storage.local.set({ [IDEA_JOB_KEY]: { ...cur, running: false, stopped: true, finishedAt: Date.now() } });
+      return { ok: true };
     }
     case 'scanGroups': {
       try {

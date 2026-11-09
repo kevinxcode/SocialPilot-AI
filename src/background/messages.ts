@@ -9,6 +9,7 @@ export type SwRequest =
   | { type: 'tick' }
   | { type: 'researchTrending' }
   | { type: 'scanGroups' }
+  | { type: 'stopIdeaJob' }
   | { type: 'queueIdeas'; ids: string[]; platforms: Platform[]; removeAfter: boolean }
   | { type: 'replanAutopilot' }
   | { type: 'reviewDecision'; postId: string; approve: boolean };

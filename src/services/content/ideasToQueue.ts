@@ -101,16 +101,24 @@ export interface IdeaJob {
   failed: string[];
   removed: number;
   startedAt: number;
+  /** last progress write; a running job without progress for 5 min is considered dead (worker restarted) */
+  updatedAt?: number;
   finishedAt?: number;
+  stopped?: boolean;
 }
+
+export const IDEA_JOB_STALE_MS = 5 * 60_000;
+export const jobIsLive = (j?: IdeaJob | null) => !!j?.running && Date.now() - (j.updatedAt ?? j.startedAt) < IDEA_JOB_STALE_MS;
 
 /** Runs in the service worker so it survives page navigation; progress lives in chrome.storage.local. */
 export async function runIdeaJob(ids: string[], platforms: Platform[], removeAfter: boolean, router?: RouterLike): Promise<IdeaJob> {
   const job: IdeaJob = { running: true, total: ids.length * platforms.length, done: 0, queued: 0, failed: [], removed: 0, startedAt: Date.now() };
-  const save = () => chrome.storage.local.set({ [IDEA_JOB_KEY]: { ...job } });
+  const save = () => chrome.storage.local.set({ [IDEA_JOB_KEY]: { ...job, updatedAt: Date.now() } });
+  const stopped = async () => !!((await chrome.storage.local.get(IDEA_JOB_KEY))[IDEA_JOB_KEY] as IdeaJob | undefined)?.stopped;
   await save();
   const ok = new Set<string>();
   for (const platform of platforms) {
+    if (await stopped()) break;
     const base = job.done;
     try {
       const r = await queueIdeas(ids, {

@@ -20,7 +20,7 @@ import { RESEARCH_KINDS, type ResearchKind } from "@/services/content/prompts";
 import { uid } from "@/lib/utils";
 import type { Language } from "@/types/models";
 import { getActiveBrandId } from "./BrandKnowledge";
-import { IDEA_JOB_KEY, type IdeaJob } from "@/services/content/ideasToQueue";
+import { IDEA_JOB_KEY, jobIsLive, type IdeaJob } from "@/services/content/ideasToQueue";
 import { sendToSw } from "@/background/messages";
 import type { Platform } from "@/types/models";
 
@@ -98,7 +98,10 @@ export function ResearchPage() {
     return () => chrome.storage.onChanged.removeListener(on);
   }, []);
   useEffect(() => {
-    setQueuing(job?.running ? job.done : null);
+    const upd = () => setQueuing(jobIsLive(job) ? job!.done : null);
+    upd();
+    const t = setInterval(upd, 15_000); // a job that stopped making progress (worker restarted) unlocks the button
+    return () => clearInterval(t);
   }, [job]);
 
   useEffect(() => {
@@ -317,6 +320,11 @@ Source: ${url}` : "";
                 ? `Generating… ${queuing}/${job?.total ?? 0}`
                 : `Add to queue (${sel.size * qPlatforms.size})`}
             </Button>
+            {queuing !== null && (
+              <Button variant="outline" onClick={() => sendToSw({ type: "stopIdeaJob" })}>
+                Stop
+              </Button>
+            )}
           </div>
         )}
         {job && !job.running && job.finishedAt && Date.now() - job.finishedAt < 30 * 60_000 && (
