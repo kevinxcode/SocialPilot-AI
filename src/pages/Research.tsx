@@ -152,6 +152,7 @@ export function ResearchPage() {
 
 Source: ${url}` : "";
     await db.ideas.bulkAdd(fresh.map((r, i) => ({ id: uid(), brandId, title: r.title, body: r.body + ref, kind, createdAt: Date.now() + i })));
+    setResults([]);
     toast(`Saved ${fresh.length} ideas${results.length - fresh.length ? ` (${results.length - fresh.length} already saved)` : ""}`);
   };
   const save = async (r: { title: string; body: string }) => {
@@ -164,6 +165,7 @@ Source: ${url}` : "";
       kind,
       createdAt: Date.now(),
     });
+    setResults((rs) => rs.filter((x) => x !== r));
     toast("Saved as content idea");
   };
 
