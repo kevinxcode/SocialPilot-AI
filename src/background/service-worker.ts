@@ -72,7 +72,15 @@ chrome.alarms.onAlarm.addListener((a) => {
 });
 
 chrome.notifications.onButtonClicked.addListener((id, idx) => {
-  if (id.startsWith('review:')) void autopilotHooks.reviewDecision(id.slice(7), idx === 0, { notify });
+  if (id.startsWith('review:')) void autopilotHooks.reviewDecision(id.slice(7), idx === 0, { notify }).then(() => tick());
+});
+
+// Re-plan autopilot slots whenever its settings change (pause/resume, cadence, windows…).
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.settings) return;
+  const before = JSON.stringify((changes.settings.oldValue as { autopilot?: unknown } | undefined)?.autopilot ?? null);
+  const after = JSON.stringify((changes.settings.newValue as { autopilot?: unknown } | undefined)?.autopilot ?? null);
+  if (before !== after) void autopilotHooks.replan(Date.now());
 });
 
 async function handle(msg: SwRequest): Promise<SwResponse> {

@@ -38,7 +38,7 @@ export class SocialPilotDB extends Dexie {
       media: 'id, name, createdAt, lastUsedAt, *tags, category',
       ideas: 'id, brandId, createdAt',
       posts: 'id, status, scheduledAt, platform, fingerprint, createdAt, publishedAt',
-      queue: 'id, runAt, postId, slotKey, platform',
+      queue: 'id, runAt, postId, slotKey, platform, kind',
       aiUsage: 'id, at, providerId, purpose',
       logs: 'id, at, level',
     });
