@@ -1,3 +1,4 @@
+import { noLinkPlatform, stripLinks } from '@/services/content/noLinks';
 import { db } from '@/services/storage/db';
 import type { Account, Platform, Post } from '@/types/models';
 import type { Publisher, PublishResult } from '../Publisher';
@@ -101,7 +102,7 @@ export class RpaPublisher implements Publisher {
         } : {
           cmd: 'publish',
           platform: this.platform,
-          input: { text: post.text, files, dryRun: !!opts.dryRun, pageName: acc.name, topic: this.platform === 'threads' ? post.topic : undefined },
+          input: { text: noLinkPlatform(this.platform) ? stripLinks(post.text) : post.text, files, dryRun: !!opts.dryRun, pageName: acc.name, topic: this.platform === 'threads' ? post.topic : undefined },
         });
         if (r.status === 'dry-run') {
           keepOpen = true; // leave the filled composer for the user to inspect

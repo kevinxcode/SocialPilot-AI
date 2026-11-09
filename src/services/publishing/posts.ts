@@ -1,3 +1,4 @@
+import { noLinkPlatform, stripLinks } from '@/services/content/noLinks';
 import { db } from '@/services/storage/db';
 import { uid } from '@/lib/utils';
 import type { Platform, Post, ProviderId } from '@/types/models';
@@ -42,7 +43,7 @@ export async function createDraft(p: NewPost): Promise<Post> {
     accountId: acc?.id ?? '',
     brandId: p.brandId,
     title: p.title,
-    text: p.text,
+    text: noLinkPlatform(p.platform) ? stripLinks(p.text) : p.text,
     mediaIds,
     groupId: p.groupId,
     status: 'draft',
