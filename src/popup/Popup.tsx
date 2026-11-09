@@ -15,7 +15,15 @@ function PopupBody() {
   useTheme(settings?.theme);
   const toast = useToast();
   const tz = settings?.timezone ?? 'Asia/Jakarta';
-  const next = useLiveQuery(() => db.posts.where('status').equals('scheduled').sortBy('scheduledAt').then((l) => l[0]), []);
+  // The real next attempt is the queue item's runAt (gap rules and retries move it), not the original schedule.
+  const next = useLiveQuery(async () => {
+    const items = (await db.queue.orderBy('runAt').toArray()).filter((q) => q.kind === 'post' && q.postId);
+    for (const q of items) {
+      const p = await db.posts.get(q.postId!);
+      if (p && ['scheduled', 'verifying'].includes(p.status)) return { ...p, scheduledAt: q.runAt };
+    }
+    return undefined;
+  }, []);
   const failed = useLiveQuery(() => db.posts.where('status').equals('failed').filter((p) => p.updatedAt > Date.now() - 86_400_000).count(), []);
   const [topic, setTopic] = useState('');
   const [platform, setPlatform] = useState<Platform>('threads');
