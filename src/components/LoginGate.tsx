@@ -11,11 +11,11 @@ type State = { loading: true } | { loading: false; signedIn: boolean; configured
 async function readState(): Promise<State> {
   const r = await chrome.storage.local.get(['cloudSession', SKIP_KEY]);
   const configured = !!(await getCloudConfig());
-  return { loading: false, signedIn: !!r.cloudSession, configured, skipped: !!r[SKIP_KEY] && !configured };
+  return { loading: false, signedIn: !!r.cloudSession, configured, skipped: !!r[SKIP_KEY] };
 }
 
 /**
- * "Login with Google" is required before using the dashboard / popup.
+ * Start screen: "Login with Google" (sync across computers) or "Continue without an account" (local only).
  * Until the Firebase project is set up the screen also holds the 3 setup fields (and a temporary way to continue
  * offline, so nobody is locked out of their own data); once it is set up, signing in is mandatory.
  * Publishing in the background keeps running either way.
@@ -63,10 +63,13 @@ export function LoginGate({ children, mode }: { children: ReactNode; mode: 'dash
       <div className="w-[360px] space-y-3 p-5 text-center text-sm">
         <Sparkles className="mx-auto h-7 w-7 text-primary" />
         <div className="font-semibold">SocialPilot AI</div>
-        <p className="text-muted-foreground">Sign in with Google to continue.</p>
+        <p className="text-muted-foreground">Sign in with Google to sync across computers — or use it without an account.</p>
         <Button className="w-full" onClick={() => chrome.runtime.openOptionsPage()}>
           <LogIn className="h-4 w-4" /> Open to sign in
         </Button>
+        <button type="button" className="w-full text-xs text-muted-foreground underline" onClick={() => chrome.storage.local.set({ [SKIP_KEY]: true })}>
+          Continue without an account
+        </button>
       </div>
     );
   }
@@ -106,11 +109,12 @@ export function LoginGate({ children, mode }: { children: ReactNode; mode: 'dash
             <Button variant="outline" className="w-full" onClick={save}>
               Save setup
             </Button>
-            <button type="button" className="w-full text-xs text-muted-foreground underline" onClick={() => chrome.storage.local.set({ [SKIP_KEY]: true })}>
-              Continue offline until the cloud is set up
-            </button>
           </div>
         )}
+        <button type="button" className="w-full text-sm text-muted-foreground underline" onClick={() => chrome.storage.local.set({ [SKIP_KEY]: true })}>
+          Continue without an account
+        </button>
+        <p className="-mt-3 text-center text-xs text-muted-foreground">Everything works on this computer; you can sign in later in Cloud & Sync.</p>
       </div>
     </div>
   );
