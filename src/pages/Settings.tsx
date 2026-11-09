@@ -14,19 +14,22 @@ export function SettingsPage({ extra }: { extra?: ReactNode }) {
   if (!settings) return null;
 
   const doExport = async () => {
-    const blob = await exportAll();
+    const includeApiKeys = confirm(
+      'Include your AI API keys in the backup file?\n\nOK = include (keep the file private — anyone with it can use your keys)\nCancel = leave them out (you paste them again after restoring)',
+    );
+    const blob = await exportAll({ includeApiKeys });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `socialpilot-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 60_000); // large backups need time to download
   };
   const doImport = async (f: File | undefined) => {
     if (!f) return;
     try {
-      await importAll(f);
-      toast('Import complete');
+      const r = await importAll(f);
+      toast(`Restored: ${r.posts} posts, ${r.media} media files${r.settings ? ', settings' : ''}`);
     } catch (e) {
       toast(`Import rejected: ${(e as Error).message.slice(0, 120)}`, 'err');
     }
