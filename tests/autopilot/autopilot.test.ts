@@ -143,3 +143,12 @@ test('missed autopilot slots after sleep: only the latest per platform runs', as
   expect(ran).toEqual(['s1']);
   expect(await db.queue.count()).toBe(0);
 });
+
+test('planDay schedules N Facebook Group slots per day', async () => {
+  const { getSettings: gs } = await import('@/services/storage/settings');
+  const s = await gs();
+  const plan = planDay('2026-11-10', { ...s, autopilot: { ...s.autopilot, enabled: true, postsPerDay: 4, groupPostsPerDay: 3, platforms: { threads: true, facebook: false, fbgroup: true } } });
+  const groups = plan.filter((q) => q.platform === 'fbgroup');
+  expect(groups).toHaveLength(3);
+  expect(new Set(groups.map((g) => g.slotKey)).size).toBe(3);
+});

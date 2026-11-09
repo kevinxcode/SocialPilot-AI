@@ -48,7 +48,7 @@ export function AutopilotSettings() {
           </div>
         </Field>
         <Field label="Platforms">
-          <div className="flex h-9 items-center gap-4 text-sm">
+          <div className="flex min-h-9 flex-wrap items-center gap-x-4 gap-y-2 text-sm">
             <label className="flex items-center gap-2">
               <Switch checked={a.platforms.threads} onChange={(v) => set({ platforms: { ...a.platforms, threads: v } })} label="Threads" /> Threads
             </label>
@@ -57,13 +57,22 @@ export function AutopilotSettings() {
               Facebook
             </label>
             <label className="flex items-center gap-2">
-              <Switch checked={a.platforms.fbgroup} onChange={(v) => set({ platforms: { ...a.platforms, fbgroup: v } })} label="Facebook Groups" /> Groups
-              (1/day)
+              <Switch checked={a.platforms.fbgroup} onChange={(v) => set({ platforms: { ...a.platforms, fbgroup: v } })} label="Facebook Groups" /> FB Groups
             </label>
           </div>
         </Field>
-        <Field label="Posts per day (per platform)">
-          <Input type="number" min={1} max={6} value={a.postsPerDay} onChange={(e) => set({ postsPerDay: Math.min(6, Math.max(1, Number(e.target.value) || 1)) })} />
+        <Field label="Posts per day (Threads / Facebook Page)">
+          <Input type="number" min={1} max={10} value={a.postsPerDay} onChange={(e) => set({ postsPerDay: Math.min(10, Math.max(1, Number(e.target.value) || 1)) })} />
+        </Field>
+        <Field label="FB Group posts per day (different groups)">
+          <Input
+            type="number"
+            min={1}
+            max={5}
+            disabled={!a.platforms.fbgroup}
+            value={a.groupPostsPerDay ?? 1}
+            onChange={(e) => set({ groupPostsPerDay: Math.min(5, Math.max(1, Number(e.target.value) || 1)) })}
+          />
         </Field>
         <Field label="Language">
           <Select value={a.language} onChange={(e) => set({ language: e.target.value as Language })}>

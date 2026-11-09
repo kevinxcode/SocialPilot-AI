@@ -194,6 +194,8 @@ export interface AutopilotSettings {
   paused: boolean;
   platforms: Record<Platform, boolean>;
   postsPerDay: number;
+  /** Facebook Group posts per day (each to a different group) */
+  groupPostsPerDay?: number;
   windowStart: string; // 'HH:mm'
   windowEnd: string;
   contentTypes: string[];

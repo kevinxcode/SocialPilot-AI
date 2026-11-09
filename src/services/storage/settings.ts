@@ -28,6 +28,7 @@ export const DEFAULT_SETTINGS: Settings = {
     paused: false,
     platforms: { threads: true, facebook: true, fbgroup: false },
     postsPerDay: 2,
+    groupPostsPerDay: 1,
     windowStart: '09:00',
     windowEnd: '19:00',
     contentTypes: ['educational', 'tips', 'pain-point', 'soft-selling'],
