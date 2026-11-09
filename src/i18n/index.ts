@@ -1,0 +1,83 @@
+import type { Language } from '@/types/models';
+
+const en = {
+  dashboard: 'Dashboard',
+  studio: 'AI Content Studio',
+  research: 'Content Research',
+  calendar: 'Content Calendar',
+  scheduled: 'Scheduled Posts',
+  media: 'Media Library',
+  accounts: 'Social Accounts',
+  analytics: 'Analytics',
+  brand: 'Brand Knowledge',
+  providers: 'AI Providers',
+  settings: 'Settings',
+  history: 'History',
+  save: 'Save',
+  saved: 'Saved',
+  cancel: 'Cancel',
+  delete: 'Delete',
+  test: 'Test',
+  testing: 'Testing…',
+  refresh: 'Refresh models',
+  enabled: 'Enabled',
+  generate: 'Generate',
+  generating: 'Generating…',
+  copy: 'Copy',
+  copied: 'Copied',
+  saveDraft: 'Save draft',
+  schedule: 'Schedule',
+  publishNow: 'Publish now',
+  notConfigured: 'Not configured',
+  autopilot: 'Autopilot',
+  paused: 'Paused',
+  running: 'Running',
+  nextPost: 'Next post',
+  openDashboard: 'Open dashboard',
+  na: 'N/A',
+} as const;
+
+export type TKey = keyof typeof en;
+
+const id: Record<TKey, string> = {
+  dashboard: 'Dasbor',
+  studio: 'Studio Konten AI',
+  research: 'Riset Konten',
+  calendar: 'Kalender Konten',
+  scheduled: 'Postingan Terjadwal',
+  media: 'Pustaka Media',
+  accounts: 'Akun Sosial',
+  analytics: 'Analitik',
+  brand: 'Pengetahuan Brand',
+  providers: 'Penyedia AI',
+  settings: 'Pengaturan',
+  history: 'Riwayat',
+  save: 'Simpan',
+  saved: 'Tersimpan',
+  cancel: 'Batal',
+  delete: 'Hapus',
+  test: 'Uji',
+  testing: 'Menguji…',
+  refresh: 'Muat ulang model',
+  enabled: 'Aktif',
+  generate: 'Buat',
+  generating: 'Membuat…',
+  copy: 'Salin',
+  copied: 'Disalin',
+  saveDraft: 'Simpan draf',
+  schedule: 'Jadwalkan',
+  publishNow: 'Terbitkan sekarang',
+  notConfigured: 'Belum diatur',
+  autopilot: 'Autopilot',
+  paused: 'Dijeda',
+  running: 'Berjalan',
+  nextPost: 'Postingan berikutnya',
+  openDashboard: 'Buka dasbor',
+  na: 'N/A',
+};
+
+export const dictionaries: Record<Language, Record<TKey, string>> = { en, id };
+
+export function translate(lang: Language, key: TKey): string {
+  return dictionaries[lang][key] ?? en[key];
+}
