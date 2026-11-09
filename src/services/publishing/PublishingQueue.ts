@@ -8,6 +8,8 @@ import type { Publisher, PublishResult } from './Publisher';
 import { MAX_ATTEMPTS, nextRetryAt } from './RetryManager';
 
 export const LOCK_MS = 5 * 60_000;
+/** One RPA run (open, preflight, compose, confirm) can take several minutes. */
+export const PUBLISH_LOCK_MS = 15 * 60_000;
 export const MISSED_TOLERANCE_MS = 5 * 60_000;
 export const SKIP_LATE_MS = 2 * 60 * 60_000;
 const DEDUPE_MS = 7 * 24 * 60 * 60_000;
@@ -98,7 +100,8 @@ export async function processDue(now: number, deps: QueueDeps): Promise<void> {
     try {
       if (isFreshLate(item)) {
         const tooLate = now - item.runAt > SKIP_LATE_MS;
-        const superseded = latestLate.get(`${item.platform}|${item.kind}`) !== item;
+        // "Only the latest missed slot" applies to autopilot cadence; manual posts are kept and spaced by the min gap.
+        const superseded = item.kind === 'slot' && latestLate.get(`${item.platform}|${item.kind}`) !== item;
         if (tooLate || superseded) {
           const reason = tooLate
             ? 'Skipped: more than 2 h late (Chrome was closed or asleep at the scheduled time)'
@@ -135,8 +138,17 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   const pub = deps.publishers[post.platform];
 
   // Ambiguous previous attempt (unknown result, or a run that died mid-publish): look before (re)posting.
-  if (post.status === 'verifying' || post.status === 'processing') {
-    const f = await pub.findExisting(post).catch(() => ({ found: false as const, url: undefined }));
+  const ambiguous = post.status === 'verifying' || post.status === 'processing';
+  if (ambiguous) {
+    let f: { found: boolean; url?: string };
+    try {
+      f = await pub.findExisting(post);
+    } catch (e) {
+      // Could not look at the feed: never treat that as "not posted". Try the check again later.
+      await setPost(post.id, { status: 'verifying', error: `Feed check failed: ${(e as Error).message}` });
+      await release(item.id, now + 2 * 60_000);
+      return;
+    }
     if (f.found) {
       await markPublished(item, post, now, f.url, deps);
       return;
@@ -169,6 +181,7 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   }
 
   const attempts = post.attempts + 1;
+  await db.queue.update(item.id, { lockedUntil: Date.now() + PUBLISH_LOCK_MS });
   await setPost(post.id, { status: 'processing', attempts, error: undefined });
   let res: PublishResult;
   try {
@@ -193,7 +206,8 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     return;
   }
   if (retryAt) {
-    await setPost(post.id, { status: 'scheduled', error: res.reason, nextRetryAt: retryAt });
+    // After an ambiguous attempt every later attempt must look at the feed first, so stay in 'verifying'.
+    await setPost(post.id, { status: ambiguous ? 'verifying' : 'scheduled', error: res.reason, nextRetryAt: retryAt });
     await release(item.id, retryAt);
     await log('warn', 'publish', `${label(post.platform)}: attempt ${attempts} failed (${res.reason}); retrying at ${new Date(retryAt).toLocaleTimeString()}`);
   } else {
@@ -202,7 +216,7 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
 }
 
 async function markPublished(item: QueueItem, post: Post, now: number, url: string | undefined, deps: QueueDeps) {
-  await setPost(post.id, { status: 'published', publishedAt: now, url, error: undefined, attempts: post.attempts, nextRetryAt: undefined });
+  await setPost(post.id, { status: 'published', publishedAt: Math.max(now, Date.now()), url, error: undefined, attempts: post.attempts, nextRetryAt: undefined });
   await finish(item.id);
   for (const m of post.mediaIds) await markUsed(m);
   await log('info', 'publish', `${label(post.platform)}: published${url ? ` ${url}` : ''}`);

@@ -126,6 +126,10 @@ export class AIRouter {
         attempts.push({ providerId: p, outcome: 'skipped', reason: pick.skip });
         continue;
       }
+      if (p === 'openrouter' && isPaid(p, pick.info) && !pick.info?.pricing && cap > 0) {
+        attempts.push({ providerId: p, modelId: pick.model, outcome: 'skipped', reason: 'price unknown — refresh the model list so the daily cap can be enforced' });
+        continue;
+      }
       if (isPaid(p, pick.info) && (await CostGuard.todaySpend(req.purpose, s.timezone)) >= cap) {
         capHit = true;
         attempts.push({ providerId: p, modelId: pick.model, outcome: 'skipped', reason: `daily cap $${cap} reached` });

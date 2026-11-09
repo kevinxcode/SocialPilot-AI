@@ -138,19 +138,6 @@ test('more than 2 h late → skipped, not published', async () => {
   expect(p?.error).toMatch(/2 h/);
 });
 
-test('several missed slots → only the latest per platform is posted', async () => {
-  for (const [id, off] of [['a', 0], ['b', 30], ['c', 60]] as const) {
-    await addPost(id);
-    await schedulePost(id, new Date(T0 + off * MIN));
-  }
-  const pub = fakePublisher([{ status: 'published' }]);
-  await processDue(T0 + 90 * MIN, deps(pub));
-  expect(pub.calls).toBe(1);
-  expect((await db.posts.get('c'))?.status).toBe('published');
-  expect((await db.posts.get('a'))?.status).toBe('failed');
-  expect((await db.posts.get('b'))?.error).toMatch(/missed/i);
-});
-
 test('min gap defers a post when the platform posted recently', async () => {
   await addPost('old', { status: 'published', publishedAt: T0 - 20 * MIN });
   await addPost('p1');
@@ -205,4 +192,55 @@ test('calendar drag keeps time of day in Asia/Jakarta', async () => {
   const { moveToDay } = await import('@/pages/Calendar');
   const at = Date.parse('2026-11-10T02:30:00Z'); // 09:30 WIB
   expect(moveToDay(at, '2026-11-12', 'Asia/Jakarta').toISOString()).toBe('2026-11-12T02:30:00.000Z');
+});
+
+test('[review#2] feed check that errors defers instead of reposting', async () => {
+  await addPost('p1', { status: 'verifying', attempts: 1, scheduledAt: T0 });
+  await db.queue.put({ id: 'q1', kind: 'post', platform: 'threads', postId: 'p1', runAt: T0 });
+  const pub = fakePublisher([{ status: 'published' }]);
+  pub.findExisting = vi.fn(async () => { throw new Error('Page load timed out'); });
+  await processDue(T0, deps(pub));
+  expect(pub.calls).toBe(0);
+  const p = await db.posts.get('p1');
+  expect(p?.status).toBe('verifying');
+  expect(p?.attempts).toBe(1);
+  expect((await db.queue.toArray())[0].runAt).toBeGreaterThan(T0);
+});
+
+test('[review#3] after an ambiguous attempt, a later preflight failure keeps verifying so the feed is checked again', async () => {
+  await addPost('p1');
+  await schedulePost('p1', new Date(T0));
+  const pub = fakePublisher([{ status: 'unknown' }, { status: 'failed', reason: 'login hiccup' }, { status: 'published' }], [{ found: false }, { found: true, url: 'https://t/late' }]);
+  await processDue(T0, deps(pub)); // unknown
+  await processDue(T0 + 2 * MIN, deps(pub)); // feed: not found → publish → failed
+  expect((await db.posts.get('p1'))?.status).toBe('verifying');
+  await processDue(T0 + 12 * MIN, deps(pub)); // must feed-check again → finds attempt 1's post
+  expect(pub.finds).toBe(2);
+  expect(pub.calls).toBe(2); // no third publish
+  expect(await db.posts.get('p1')).toMatchObject({ status: 'published', url: 'https://t/late' });
+});
+
+test('[review#5] missed manual posts are not superseded — both go out (gap enforced)', async () => {
+  await addPost('a');
+  await addPost('b');
+  await schedulePost('a', new Date(T0));
+  await schedulePost('b', new Date(T0 + 30 * MIN));
+  const pub = fakePublisher([{ status: 'published' }]);
+  await processDue(T0 + 60 * MIN, deps(pub));
+  expect((await db.posts.get('a'))?.status).toBe('published');
+  expect((await db.posts.get('b'))?.status).toBe('scheduled'); // deferred by min gap, not failed
+});
+
+test('[review#6] lock is refreshed right before publishing', async () => {
+  const t = Date.now();
+  await addPost('p1');
+  await schedulePost('p1', new Date(t));
+  let lockAtPublish: number | undefined;
+  const pub = fakePublisher([{ status: 'published' }]);
+  pub.publish = vi.fn(async () => {
+    lockAtPublish = (await db.queue.toArray())[0]?.lockedUntil;
+    return { status: 'published' as const };
+  });
+  await processDue(t, deps(pub));
+  expect(lockAtPublish).toBeGreaterThanOrEqual(t + 9 * MIN);
 });

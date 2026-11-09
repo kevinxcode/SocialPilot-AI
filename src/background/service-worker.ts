@@ -7,6 +7,7 @@ import { publishers } from '@/services/publishing/rpa/RpaPublisher';
 import { fingerprint } from '@/services/publishing/fingerprint';
 import { autopilotHooks } from './autopilotHooks';
 import { syncOllamaOriginRule } from './ollamaOrigin';
+import { isTrustedSender } from './sender';
 import { getSettings } from '@/services/storage/settings';
 import type { SwRequest, SwResponse } from './messages';
 import type { Post } from '@/types/models';
@@ -139,7 +140,8 @@ async function handle(msg: SwRequest): Promise<SwResponse> {
 }
 
 chrome.runtime.onMessage.addListener((msg: SwRequest & { __rpa?: true }, sender, sendResponse) => {
-  if (msg?.__rpa || sender.tab) return false; // RPA traffic is for content scripts
+  // RPA traffic goes SW → content script only; accept requests only from our own extension pages.
+  if (msg?.__rpa || !isTrustedSender(sender, chrome.runtime.id, chrome.runtime.getURL(''))) return false;
   handle(msg)
     .then(sendResponse)
     .catch((e: Error) => sendResponse({ ok: false, message: e.message }));

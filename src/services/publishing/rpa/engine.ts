@@ -128,9 +128,13 @@ export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o:
   );
   if (!post) return { status: 'failed', reason: 'Post button not found or disabled' };
   click(post);
-  // From here on the outcome is ambiguous unless the composer closes.
-  const closed = await waitFor(() => !document.contains(dialog) || (dialog as HTMLElement).getAttribute('aria-hidden') === 'true', T(o, 60_000), o.pollMs);
-  return closed ? { status: 'clicked' } : { status: 'unknown', reason: 'Composer did not close after clicking Post' };
+  // From here on the outcome is ambiguous unless the composer closes — never report 'failed'.
+  try {
+    const closed = await waitFor(() => !document.contains(dialog) || (dialog as HTMLElement).getAttribute('aria-hidden') === 'true', T(o, 60_000), o.pollMs);
+    return closed ? { status: 'clicked' } : { status: 'unknown', reason: 'Composer did not close after clicking Post' };
+  } catch (e) {
+    return { status: 'unknown', reason: `Error after clicking Post: ${(e as Error).message}` };
+  }
 }
 
 export async function runFindExisting(cfg: PlatformSelectors, fp: string, o: EngineOpts = {}): Promise<{ found: boolean; url?: string }> {

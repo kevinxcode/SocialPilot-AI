@@ -128,3 +128,9 @@ test('model with no registry entry on a paid provider is treated as paid', async
   await updateSettings({ router: { mode: 'freeOnly' }, providers: { ollama: { enabled: false }, openrouter: { model: 'unknown/x' } } });
   await expect(router.generate({ messages: msgs, purpose: 'interactive' })).rejects.toMatchObject({ code: 'NO_ELIGIBLE' });
 });
+
+test('[review#7] paid model with unknown price is refused while a daily cap is set', async () => {
+  await updateSettings({ router: { mode: 'manual', manualProvider: 'openrouter', allowPaid: true, dailyCapUsd: 1 }, providers: { openrouter: { model: 'unpriced/model' } } });
+  await expect(router.generate({ messages: msgs, purpose: 'interactive' })).rejects.toMatchObject({ code: 'NO_ELIGIBLE' });
+  expect(calls).toEqual([]);
+});
