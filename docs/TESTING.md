@@ -4,7 +4,7 @@ This is an honest record of what has been checked and how. "Not verified" means 
 
 ## Automated (`npm test`)
 
-The suite has 103 tests in Vitest, run against fake-indexeddb and jsdom. It covers:
+The suite has 102 tests in Vitest, run against fake-indexeddb and jsdom. It covers:
 
 - **Storage:** seeding, export and import round-trips, invalid-import rollback, settings defaults.
 - **AI providers:** model parsing; SSE and NDJSON streaming; Ollama errors (not running, 403 CORS, model missing); `think:false`; filtering out embedding models; HTTP-200 error bodies; timeouts; key redaction.
