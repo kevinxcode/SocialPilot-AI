@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { formatInTimeZone } from 'date-fns-tz';
 import { Empty, Select, Table, Tabs } from '@/components/ui';
@@ -30,6 +30,17 @@ export function ScheduledPostsPage({ initialView = 'queue' }: { initialView?: Vi
     .sort((a, b) =>
       view === 'queue' ? (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0) : (b.publishedAt ?? b.updatedAt) - (a.publishedAt ?? a.updatedAt),
     );
+  // Infinite scroll: render 30 rows, load 30 more when the sentinel scrolls into view.
+  const [limit, setLimit] = useState(30);
+  const sentinel = useRef<HTMLDivElement>(null);
+  useEffect(() => setLimit(30), [view, platform, status]);
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver((es) => es[0]?.isIntersecting && setLimit((l) => l + 30), { rootMargin: '400px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [list.length, limit]);
   const fmt = (ms?: number) => (ms ? formatInTimeZone(ms, tz, 'dd MMM yyyy HH:mm') : '—');
 
   return (
@@ -73,7 +84,7 @@ export function ScheduledPostsPage({ initialView = 'queue' }: { initialView?: Vi
             </tr>
           </thead>
           <tbody>
-            {list.map((p) => (
+            {list.slice(0, limit).map((p) => (
               <tr key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setOpen(p)}>
                 <td className="whitespace-nowrap">{fmt(view === 'history' ? (p.publishedAt ?? p.updatedAt) : p.scheduledAt)}</td>
                 <td>{platformLabel(p.platform)}{p.replyTo ? ' · Reply' : ''}</td>
@@ -94,6 +105,11 @@ export function ScheduledPostsPage({ initialView = 'queue' }: { initialView?: Vi
             ))}
           </tbody>
         </Table>
+      )}
+      {list.length > limit && (
+        <div ref={sentinel} className="py-4 text-center text-xs text-muted-foreground">
+          Showing {limit} of {list.length} — scroll for more
+        </div>
       )}
       <PostEditor post={open} onClose={() => setOpen(null)} />
     </div>

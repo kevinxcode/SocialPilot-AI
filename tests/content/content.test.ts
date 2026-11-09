@@ -69,3 +69,9 @@ test('fingerprint normalises case, emoji, urls and whitespace', () => {
   expect(fingerprint('Halo  LAUNDRY 🧺\nhttps://x.y/z  #promo Mantap!')).toBe('halo laundry mantap');
   expect(fingerprint('x'.repeat(100))).toHaveLength(60);
 });
+
+test('literal backslash-n from a model becomes a real line break', async () => {
+  const { parseVariations } = await import('@/services/content/parse');
+  const v = parseVariations(JSON.stringify({ variations: [{ caption: 'Halo?\\n\\nBaris dua' }] }), 'threads');
+  expect(v[0].caption).toBe('Halo?\n\nBaris dua');
+});
