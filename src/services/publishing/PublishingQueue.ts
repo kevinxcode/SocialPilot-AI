@@ -68,6 +68,11 @@ async function finish(itemId: string) {
 }
 async function release(itemId: string, runAt?: number) {
   await db.queue.update(itemId, { lockedUntil: undefined, ...(runAt ? { runAt } : {}) });
+  // Keep the post's shown time in step with when it will really be tried.
+  if (runAt) {
+    const q = await db.queue.get(itemId);
+    if (q?.postId) await db.posts.update(q.postId, { scheduledAt: runAt, updatedAt: Date.now() });
+  }
 }
 async function setPost(id: string, patch: Partial<Post>) {
   await db.posts.update(id, { ...patch, updatedAt: Date.now() });
@@ -106,17 +111,14 @@ export async function processDue(now: number, deps: QueueDeps): Promise<void> {
         const tooLate = now - item.runAt > SKIP_LATE_MS;
         // "Only the latest missed slot" applies to autopilot cadence; manual posts are kept and spaced by the min gap.
         const superseded = item.kind === 'slot' && latestLate.get(`${item.platform}|${item.kind}`) !== item;
-        if (tooLate || superseded) {
+        // Late autopilot slots are dropped (a fresh one comes tomorrow); late posts you wrote are still published,
+        // spaced by the minimum gap, and their time moves forward.
+        if (item.kind === 'slot' && (tooLate || superseded)) {
           const reason = tooLate
             ? 'Skipped: more than 2 h late (Chrome was closed or asleep at the scheduled time)'
             : 'Skipped: missed slot superseded by a later one (only the latest missed slot is posted)';
-          if (item.kind === 'slot') {
-            await finish(item.id);
-            await log('warn', 'autopilot', `${label(item.platform)} slot ${item.slotKey}: ${reason}`);
-          } else {
-            const post = postsById.get(item.postId!)!;
-            await fail(item, post, reason, deps);
-          }
+          await finish(item.id);
+          await log('warn', 'autopilot', `${label(item.platform)} slot ${item.slotKey}: ${reason}`);
           continue;
         }
       }
@@ -309,6 +311,9 @@ export async function recoverOnStartup(now: number): Promise<void> {
  */
 export async function repairOrphans(now: number): Promise<number> {
   return db.transaction('rw', db.posts, db.queue, async () => {
+    // Posts that an older version skipped for being late get another chance.
+    const skipped = (await db.posts.where('status').equals('failed').toArray()).filter((p) => p.source !== 'autopilot' && /^Skipped: more than 2 h late/.test(p.error ?? ''));
+    for (const p of skipped) await db.posts.update(p.id, { status: 'scheduled', error: undefined, attempts: 0, scheduledAt: now, updatedAt: now });
     const live = await db.posts.where('status').anyOf('scheduled', 'verifying').toArray();
     let n = 0;
     for (const p of live) {

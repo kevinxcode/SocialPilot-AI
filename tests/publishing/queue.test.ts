@@ -138,15 +138,21 @@ test('restart with a processing post → verifying, feed-checked, no repost if f
   expect((await db.posts.get('p1'))?.status).toBe('published');
 });
 
-test('more than 2 h late → skipped, not published', async () => {
+test('a post more than 2 h late is still published (retried late, not skipped)', async () => {
   await addPost('p1');
   await schedulePost('p1', new Date(T0));
   const pub = fakePublisher([{ status: 'published' }]);
   await processDue(T0 + 121 * MIN, deps(pub));
-  expect(pub.calls).toBe(0);
-  const p = await db.posts.get('p1');
-  expect(p?.status).toBe('failed');
-  expect(p?.error).toMatch(/2 h/);
+  expect(pub.calls).toBe(1);
+  expect((await db.posts.get('p1'))?.status).toBe('published');
+});
+
+test('deferring a post moves its shown time to the real next attempt', async () => {
+  await addPost('old', { status: 'published', publishedAt: T0 - 5 * MIN });
+  await addPost('p1');
+  await schedulePost('p1', new Date(T0));
+  await processDue(T0, deps(fakePublisher([{ status: 'published' }])));
+  expect((await db.posts.get('p1'))?.scheduledAt).toBe(T0 + 55 * MIN);
 });
 
 test('min gap defers a post when the platform posted recently', async () => {
@@ -301,4 +307,11 @@ test('scheduled posts without a queue item are re-queued', async () => {
   expect(await repairOrphans(T0)).toBe(1);
   expect((await db.queue.where('postId').equals('p1').first())?.runAt).toBe(T0);
   expect(await repairOrphans(T0)).toBe(0);
+});
+
+test('posts previously skipped for being late are re-queued', async () => {
+  const { repairOrphans } = await import('@/services/publishing/PublishingQueue');
+  await addPost('p1', { status: 'failed', error: 'Skipped: more than 2 h late (Chrome was closed)', scheduledAt: T0 - 300 * MIN });
+  expect(await repairOrphans(T0)).toBe(1);
+  expect(await db.posts.get('p1')).toMatchObject({ status: 'scheduled', scheduledAt: T0 });
 });
