@@ -106,6 +106,9 @@ export function ScheduledPostsPage({ initialView = 'queue' }: { initialView?: Vi
           </tbody>
         </Table>
       )}
+      {list.length > 0 && list.length <= limit && (
+        <div className="py-3 text-center text-xs text-muted-foreground">All {list.length} posts shown</div>
+      )}
       {list.length > limit && (
         <div ref={sentinel} className="py-4 text-center text-xs text-muted-foreground">
           Showing {limit} of {list.length} — scroll for more
