@@ -14,9 +14,9 @@ export const DEFAULT_SETTINGS: Settings = {
     dailyCapUsd: 1,
   },
   providers: {
-    ollama: { enabled: true, baseUrl: 'http://localhost:11434', timeoutMs: 180_000 },
+    ollama: { enabled: true, baseUrl: 'http://localhost:11434', timeoutMs: 180_000, model: 'qwen3:8b' },
     nvidia: { enabled: false, baseUrl: 'https://integrate.api.nvidia.com/v1', timeoutMs: 60_000 },
-    openrouter: { enabled: false, baseUrl: 'https://openrouter.ai/api/v1', timeoutMs: 60_000 },
+    openrouter: { enabled: false, baseUrl: 'https://openrouter.ai/api/v1', timeoutMs: 60_000, model: 'openrouter/free' },
   },
   autopilot: {
     enabled: false,
