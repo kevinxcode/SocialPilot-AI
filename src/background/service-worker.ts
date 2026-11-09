@@ -44,8 +44,14 @@ function keepAlive(): () => void {
 }
 
 let ticking: Promise<void> | null = null;
+let tickStartedAt = 0;
+/** A run that hangs (e.g. a stuck browser API call) must not block the queue forever. */
+const TICK_STALE_MS = 12 * 60_000;
 export function tick(): Promise<void> {
-  if (ticking) return ticking;
+  if (ticking && Date.now() - tickStartedAt < TICK_STALE_MS) return ticking;
+  if (ticking) void log('warn', 'scheduler', 'Previous queue run looked stuck — starting a new one');
+  tickStartedAt = Date.now();
+  const started = tickStartedAt;
   const stop = keepAlive();
   ticking = (async () => {
     try {
@@ -55,7 +61,7 @@ export function tick(): Promise<void> {
       await log('error', 'scheduler', (e as Error).message);
     } finally {
       stop();
-      ticking = null;
+      if (tickStartedAt === started) ticking = null;
     }
   })();
   return ticking;
@@ -138,7 +144,7 @@ async function handle(msg: SwRequest): Promise<SwResponse> {
         : { ok: false, message: 'reason' in r ? r.reason : r.status };
     }
     case 'publishNow': {
-      await schedulePost(msg.postId, new Date());
+      await schedulePost(msg.postId, new Date(), { immediate: true });
       void tick();
       return { ok: true, message: 'Publishing started — you will get a notification' };
     }

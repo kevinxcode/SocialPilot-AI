@@ -30,14 +30,14 @@ export function zonedToUtc(local: string, timezone: string): Date {
 
 const label = (p: Platform) => platformLabel(p);
 
-export async function schedulePost(postId: string, at: Date): Promise<void> {
+export async function schedulePost(postId: string, at: Date, opts: { immediate?: boolean } = {}): Promise<void> {
   await db.transaction('rw', db.posts, db.queue, async () => {
     const post = await db.posts.get(postId);
     if (!post) throw new Error('Post not found');
     if (post.status === 'published') throw new Error('Post is already published');
     await db.queue.where('postId').equals(postId).delete();
     await db.posts.update(postId, { status: 'scheduled', scheduledAt: at.getTime(), attempts: 0, error: undefined, nextRetryAt: undefined, updatedAt: Date.now() });
-    await db.queue.add({ id: uid(), kind: 'post', platform: post.platform, postId, runAt: at.getTime() });
+    await db.queue.add({ id: uid(), kind: 'post', platform: post.platform, postId, runAt: at.getTime(), ...(opts.immediate ? { immediate: true } : {}) });
   });
 }
 
@@ -173,7 +173,8 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   }
   const lastAt = last[0]?.publishedAt ?? 0;
   const gapMs = (post.platform === 'fbgroup' ? groupGapMinutes : minGapMinutes) * 60_000;
-  if (lastAt && now - lastAt < gapMs) {
+  if (lastAt && now - lastAt < gapMs && !item.immediate) {
+    await setPost(post.id, { nextRetryAt: lastAt + gapMs, error: `Waiting: min ${gapMs / 60_000} min gap after the last ${label(post.platform)} post` });
     await release(item.id, lastAt + gapMs);
     await log('info', 'queue', `${label(post.platform)}: deferred to respect ${minGapMinutes} min gap`);
     return;

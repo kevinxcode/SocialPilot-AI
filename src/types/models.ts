@@ -138,6 +138,8 @@ export interface QueueItem {
   contentType?: string;
   runAt: number;
   lockedUntil?: number;
+  /** "Publish now": skip the minimum-gap wait */
+  immediate?: boolean;
 }
 
 export interface AIUsage {
