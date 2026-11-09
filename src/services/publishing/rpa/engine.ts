@@ -58,6 +58,9 @@ export async function runPreflight(
     return { ok: true };
   }
   if (cfg.platform === 'fbgroup') {
+    if (/this group is paused|grup ini dijeda|grup ini dihentikan sementara/i.test(document.body?.innerText ?? document.body?.textContent ?? '')) {
+      return { ok: false, reason: 'Group is paused by its admin — nobody can post.' };
+    }
     if (!findBySelectors(cfg.ownProfileProof)) {
       return { ok: false, reason: 'Not a member of this group, or posting is turned off for you. Join the group first.' };
     }

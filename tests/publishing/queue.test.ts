@@ -315,3 +315,19 @@ test('posts previously skipped for being late are re-queued', async () => {
   expect(await repairOrphans(T0)).toBe(1);
   expect(await db.posts.get('p1')).toMatchObject({ status: 'scheduled', scheduledAt: T0 });
 });
+
+test('a paused group is switched off and its waiting posts move to another group', async () => {
+  await db.groups.bulkAdd([
+    { id: 'g1', name: 'Paused', url: 'https://www.facebook.com/groups/1', rules: '', enabled: true },
+    { id: 'g2', name: 'Live', url: 'https://www.facebook.com/groups/2', rules: '', enabled: true },
+  ]);
+  await addPost('p1', { platform: 'fbgroup', groupId: 'g1' });
+  await addPost('p2', { platform: 'fbgroup', groupId: 'g1' });
+  await schedulePost('p1', new Date(T0));
+  await schedulePost('p2', new Date(T0 + 120 * MIN));
+  const pub = fakePublisher([{ status: 'failed', reason: 'Group is paused by its admin — nobody can post.' }]);
+  await processDue(T0, deps(pub));
+  expect(await db.groups.get('g1')).toMatchObject({ enabled: false, disabledReason: expect.stringMatching(/paused/) });
+  expect((await db.posts.get('p2'))?.groupId).toBe('g2');
+  expect((await db.posts.get('p1'))?.groupId).toBe('g2');
+});

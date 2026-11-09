@@ -78,7 +78,42 @@ async function setPost(id: string, patch: Partial<Post>) {
   await db.posts.update(id, { ...patch, updatedAt: Date.now() });
 }
 
+/** Group failures that will not fix themselves on retry. */
+export const PERMANENT_GROUP_FAILURE = /paused|dijeda|not a member|join the group|not found or disabled|posting is turned off/i;
+
+/**
+ * A group that can't be posted to is switched off, and its waiting posts move to another enabled group
+ * (or are cancelled when there is none), so the queue never retries a dead group.
+ */
+export async function retireGroup(groupId: string, reason: string, now = Date.now()): Promise<{ moved: number; cancelled: number }> {
+  await db.groups.update(groupId, { enabled: false, disabledReason: reason, lastCheckOk: false, lastCheckMessage: reason });
+  const others = (await db.groups.toArray()).filter((g) => g.enabled && g.id !== groupId);
+  const waiting = (await db.posts.where('groupId').equals(groupId).toArray()).filter((p) => p.status === 'scheduled' || p.status === 'failed');
+  let moved = 0;
+  let cancelled = 0;
+  for (const [i, p] of waiting.entries()) {
+    if (others.length) {
+      await db.posts.update(p.id, { groupId: others[i % others.length].id, status: p.status === 'failed' ? 'scheduled' : p.status, error: undefined, updatedAt: now });
+      if (p.status === 'failed') await schedulePost(p.id, new Date(now));
+      moved++;
+    } else {
+      await db.posts.update(p.id, { status: 'cancelled', error: `Group switched off: ${reason}`, updatedAt: now });
+      await db.queue.where('postId').equals(p.id).delete();
+      cancelled++;
+    }
+  }
+  await log('warn', 'groups', `Group switched off (${reason}); ${moved} posts moved to other groups, ${cancelled} cancelled`);
+  return { moved, cancelled };
+}
+
 async function fail(item: QueueItem, post: Post, reason: string, deps: QueueDeps) {
+  if (post.platform === 'fbgroup' && post.groupId && PERMANENT_GROUP_FAILURE.test(reason)) {
+    await finish(item.id);
+    await setPost(post.id, { status: 'failed', error: reason }); // so retireGroup moves this post too
+    await retireGroup(post.groupId, reason);
+    deps.notify('Facebook Group switched off', reason);
+    return;
+  }
   await setPost(post.id, { status: 'failed', error: reason });
   await finish(item.id);
   await log('error', 'publish', `${label(post.platform)}: ${reason}`);
@@ -265,7 +300,8 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     await log('warn', 'publish', `${label(post.platform)}: outcome unknown (${res.reason ?? ''}) — verifying`);
     return;
   }
-  if (retryAt) {
+  const permanent = post.platform === 'fbgroup' && PERMANENT_GROUP_FAILURE.test(res.reason ?? '');
+  if (retryAt && !permanent) {
     // After an ambiguous attempt every later attempt must look at the feed first, so stay in 'verifying'.
     await setPost(post.id, { status: ambiguous ? 'verifying' : 'scheduled', error: res.reason, nextRetryAt: retryAt });
     await release(item.id, retryAt);

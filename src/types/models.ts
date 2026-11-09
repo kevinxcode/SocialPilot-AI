@@ -76,6 +76,8 @@ export interface ThreadsTopic {
 
 /** A Facebook Group the user is a member of. */
 export interface FbGroup {
+  /** set when posting failed for a reason that will not fix itself (paused, not a member); the group is switched off */
+  disabledReason?: string;
   id: string;
   name: string;
   url: string;

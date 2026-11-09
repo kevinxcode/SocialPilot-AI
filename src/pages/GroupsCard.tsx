@@ -56,7 +56,7 @@ function GroupRow({ g, busy, onRun, result }: { g: FbGroup; busy: string | null;
   return (
     <li className="py-2">
       <div className="flex items-center gap-3">
-        <Switch checked={g.enabled} onChange={(v) => db.groups.update(g.id, { enabled: v })} label={`Enable ${g.name}`} />
+        <Switch checked={g.enabled} onChange={(v) => db.groups.update(g.id, { enabled: v, ...(v ? { disabledReason: undefined } : {}) })} label={`Enable ${g.name}`} />
         <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={() => setOpen((o) => !o)}>
           {open ? <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
           <span className={`truncate text-sm font-medium ${g.enabled ? '' : 'text-muted-foreground'}`} title={g.name}>
@@ -64,6 +64,11 @@ function GroupRow({ g, busy, onRun, result }: { g: FbGroup; busy: string | null;
           </span>
           {g.rules && <Badge>rules</Badge>}
           {status && (status.ok ? <Badge tone="success">OK</Badge> : <Badge tone="danger">check failed</Badge>)}
+          {g.disabledReason && !g.enabled && (
+            <Badge tone="danger" title={g.disabledReason}>
+              auto-off
+            </Badge>
+          )}
         </button>
         <div className="flex shrink-0 items-center gap-1">
           <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => onRun(g.id, 'check')}>
