@@ -83,6 +83,9 @@ export function LoginGate({ children, mode }: { children: ReactNode; mode: 'dash
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />} Login with Google
         </Button>
         {!st.configured && (
+          <p className="-mt-2 text-center text-xs text-amber-500">Login is available after the one-time setup below is saved.</p>
+        )}
+        {!st.configured && (
           <div className="space-y-3 border-t border-border pt-4">
             <p className="text-xs text-muted-foreground">One-time setup (docs/SETUP-CLOUD.md): paste the values of your Firebase project.</p>
             <Field label="Web API key">
