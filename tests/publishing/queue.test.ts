@@ -1,4 +1,4 @@
-import { schedulePost, cancel, processDue, recoverOnStartup, zonedToUtc, type QueueDeps } from '@/services/publishing/PublishingQueue';
+import { schedulePost, cancel, processDue, recoverOnStartup, zonedToUtc, type QueueDeps , removeDuplicates } from '@/services/publishing/PublishingQueue';
 import { BACKOFF_MIN } from '@/services/publishing/RetryManager';
 import { db, resetDb } from '@/services/storage/db';
 import type { Publisher, PublishResult } from '@/services/publishing/Publisher';
@@ -382,4 +382,51 @@ test('an unclear group post is never resent; found on the pending page → publi
   await processDue(T0 + 6 * 60 * MIN, deps(later));
   expect(later.calls).toBe(0);
   expect(await db.posts.get('p1')).toMatchObject({ status: 'published', note: expect.stringMatching(/admin approval/) });
+});
+
+describe('duplicate guard', () => {
+  test('waiting copies of an identical post on the same platform are removed automatically; other platforms are kept', async () => {
+    await addPost('live', { text: 'Tips laundry: pisahkan cucian!', fingerprint: 'tips', status: 'published', publishedAt: T0 - 60 * MIN });
+    await addPost('copy', { text: 'Tips  laundry: pisahkan cucian!', fingerprint: 'tips' });
+    await addPost('fb', { platform: 'facebook', text: 'Tips laundry: pisahkan cucian!', fingerprint: 'tips' });
+    await addPost('a1', { text: 'Promo minggu ini untuk pelanggan setia', fingerprint: 'promo' });
+    await addPost('a2', { text: 'Promo minggu ini untuk pelanggan setia', fingerprint: 'promo' });
+    for (const id of ['copy', 'fb', 'a1', 'a2']) await schedulePost(id, new Date(T0 + 60 * MIN));
+    await db.posts.update('a2', { createdAt: 5 });
+    const removed = await removeDuplicates(T0);
+    expect(removed).toBe(2);
+    expect((await db.posts.get('copy'))?.status).toBe('cancelled');
+    expect((await db.posts.get('copy'))?.error).toMatch(/Duplicate removed/);
+    expect(await db.queue.where('postId').equals('copy').count()).toBe(0);
+    expect((await db.posts.get('fb'))?.status).toBe('scheduled');
+    expect((await db.posts.get('a1'))?.status).toBe('scheduled'); // the older copy stays
+    expect((await db.posts.get('a2'))?.status).toBe('cancelled');
+  });
+
+  test('only exact same text counts; same opening but different ending is kept', async () => {
+    await addPost('x1', { text: 'Tips laundry hari ini nomor satu', fingerprint: 'f' });
+    await addPost('x2', { text: 'Tips laundry hari ini nomor dua', fingerprint: 'f' });
+    await schedulePost('x1', new Date(T0));
+    await schedulePost('x2', new Date(T0));
+    expect(await removeDuplicates(T0)).toBe(0);
+  });
+
+  test('replies: the same text to different comments is not a duplicate; to the same comment it is', async () => {
+    await addPost('r1', { text: 'Terima kasih kak!', replyTo: 'https://www.threads.com/@a/post/1' });
+    await addPost('r2', { text: 'Terima kasih kak!', replyTo: 'https://www.threads.com/@b/post/2' });
+    await addPost('r3', { text: 'Terima kasih kak!', replyTo: 'https://www.threads.com/@a/post/1', createdAt: 9 });
+    for (const id of ['r1', 'r2', 'r3']) await schedulePost(id, new Date(T0));
+    expect(await removeDuplicates(T0)).toBe(1);
+    expect((await db.posts.get('r3'))?.status).toBe('cancelled');
+  });
+
+  test('a copy reaching publish time is cancelled (not failed)', async () => {
+    await addPost('live', { text: 'Sama persis', fingerprint: 'sama', status: 'published', publishedAt: T0 - 60 * MIN });
+    await addPost('dup', { text: 'Sama persis', fingerprint: 'sama' });
+    await schedulePost('dup', new Date(T0));
+    const pub = fakePublisher([{ status: 'published' }]);
+    await processDue(T0, deps(pub));
+    expect(pub.calls).toBe(0);
+    expect((await db.posts.get('dup'))?.status).toBe('cancelled');
+  });
 });

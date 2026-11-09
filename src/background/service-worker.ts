@@ -14,7 +14,7 @@ import { dailySummary } from '@/services/autopilot/insights';
 import { topicForPost } from '@/services/content/topics';
 import { aiRouter } from '@/services/ai/AIRouter';
 import { db, log, seedIfEmpty } from '@/services/storage/db';
-import { repairOrphans, processDue, recoverOnStartup, schedulePost, type QueueDeps } from '@/services/publishing/PublishingQueue';
+import { removeDuplicates, repairOrphans, processDue, recoverOnStartup, schedulePost, type QueueDeps } from '@/services/publishing/PublishingQueue';
 import { publishers } from '@/services/publishing/rpa/RpaPublisher';
 import { fingerprint } from '@/services/publishing/fingerprint';
 import { autopilotHooks } from './autopilotHooks';
@@ -118,6 +118,7 @@ export function tick(): Promise<void> {
   ticking = (async () => {
     try {
       await autopilotHooks.ensurePlanned(Date.now());
+      await removeDuplicates(Date.now());
       const fixed = await repairOrphans(Date.now());
       if (fixed) await log('warn', 'queue', `Re-queued ${fixed} scheduled posts that had lost their queue entry`);
       await processDue(Date.now(), deps);

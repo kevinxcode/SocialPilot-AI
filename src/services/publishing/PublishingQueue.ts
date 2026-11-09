@@ -6,6 +6,7 @@ import { uid } from '@/lib/utils';
 import type { Platform, Post, QueueItem } from '@/types/models';
 import type { Publisher, PublishResult } from './Publisher';
 import { MAX_ATTEMPTS, nextRetryAt } from './RetryManager';
+import { normalizeText } from './fingerprint';
 import { platformLabel } from '@/lib/platform';
 
 export const LOCK_MS = 5 * 60_000;
@@ -294,7 +295,10 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     .filter((p) => p.id !== post.id && p.platform === post.platform && sameTarget(p, post) && p.status === 'published' && (p.publishedAt ?? 0) > now - DEDUPE_MS)
     .first();
   if (dup) {
-    await fail(item, post, `Duplicate of a post published ${new Date(dup.publishedAt!).toLocaleString()}`, deps);
+    // Not a failure: the content is already live, so this copy is simply dropped.
+    await setPost(post.id, { status: 'cancelled', error: `Duplicate removed: same text was published ${new Date(dup.publishedAt!).toLocaleString()}`, nextRetryAt: undefined });
+    await finish(item.id);
+    await log('warn', 'queue', `${label(post.platform)}: duplicate of a published post — removed from the queue`);
     return;
   }
 
@@ -384,6 +388,47 @@ export async function recoverOnStartup(now: number): Promise<void> {
  * Scheduled/verifying posts whose queue item went missing (e.g. an interrupted run) would wait forever.
  * Re-queue them now; the gap and duplicate rules still apply.
  */
+/**
+ * Duplicate guard: a waiting post (scheduled / failed) whose text is EXACTLY the same (after normalising spaces,
+ * case and punctuation) as another post on the same platform and target is cancelled and taken out of the queue.
+ * The copy that is already live / in progress, or else the oldest one, is kept. Drafts are never touched.
+ * Returns the number removed.
+ */
+export async function removeDuplicates(now = Date.now()): Promise<number> {
+  const posts = (await db.posts.toArray()).filter((p) => p.status !== 'cancelled' && p.status !== 'draft');
+  const groups = new Map<string, Post[]>();
+  for (const p of posts) {
+    const key = `${p.platform}|${p.replyTo ?? ''}|${normalizeText(p.text)}`;
+    groups.set(key, [...(groups.get(key) ?? []), p]);
+  }
+  const live = (p: Post) => ['published', 'processing', 'verifying'].includes(p.status);
+  let removed = 0;
+  // Copies that are already live are never deleted automatically (irreversible); they are reported once in Logs.
+  const reported = new Set(((await chrome.storage.local.get('dupReported')).dupReported as string[] | undefined) ?? []);
+  let newReports = 0;
+  for (const [key, list] of groups) {
+    const published = list.filter((p) => p.status === 'published');
+    if (published.length > 1 && !reported.has(key)) {
+      reported.add(key);
+      newReports++;
+      await log('warn', 'queue', `Same text is live ${published.length}× on ${label(published[0].platform)} — delete the extra copies by hand: ${published.map((p) => p.url ?? (p.groupId ? `group ${p.groupId}` : p.id)).join(', ')}`);
+    }
+  }
+  if (newReports) await chrome.storage.local.set({ dupReported: [...reported].slice(-300) });
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    const keep = list.find(live) ?? [...list].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))[0];
+    for (const p of list) {
+      if (p.id === keep.id || live(p)) continue;
+      await db.posts.update(p.id, { status: 'cancelled', error: `Duplicate removed: same text as another ${label(p.platform)} post`, nextRetryAt: undefined, updatedAt: now });
+      await db.queue.where('postId').equals(p.id).delete();
+      removed++;
+    }
+  }
+  if (removed) await log('warn', 'queue', `Duplicate guard: removed ${removed} waiting post(s) with exactly the same text on the same platform`);
+  return removed;
+}
+
 export async function repairOrphans(now: number): Promise<number> {
   return db.transaction('rw', db.posts, db.queue, async () => {
     // Posts that an older version skipped for being late get another chance.
