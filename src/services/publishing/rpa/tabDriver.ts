@@ -60,8 +60,19 @@ export const TabDriver = {
       if (tab.status !== 'complete') await waitComplete(tabId);
     }
     await sleep(1500 + Math.random() * 1500); // let the SPA hydrate
+    const ping = () => chrome.tabs.sendMessage(tabId!, { cmd: 'ping', __rpa: true });
     await chrome.scripting.executeScript({ target: { tabId: tabId! }, files: [contentScript] });
-    await waitForContentScript(() => chrome.tabs.sendMessage(tabId!, { cmd: 'ping', __rpa: true }));
+    try {
+      await waitForContentScript(ping, 8_000);
+    } catch {
+      // The page may have navigated/reloaded during injection (SPA redirects): inject once more.
+      if (tabId != null) {
+        const tab = await chrome.tabs.get(tabId);
+        if (tab.status !== 'complete') await waitComplete(tabId, 30_000).catch(() => undefined);
+      }
+      await chrome.scripting.executeScript({ target: { tabId: tabId! }, files: [contentScript] });
+      await waitForContentScript(ping, 12_000);
+    }
     return tabId!;
   },
 
