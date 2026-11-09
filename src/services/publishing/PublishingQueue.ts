@@ -106,6 +106,29 @@ export async function retireGroup(groupId: string, reason: string, now = Date.no
   return { moved, cancelled };
 }
 
+/**
+ * A group post that failed every retry with a clear (non-ambiguous) error gets ONE more chance in another enabled
+ * group that has not had a post in the last 24 h. Ambiguous posts never move: the text might already be live.
+ */
+async function tryAnotherGroup(item: QueueItem, post: Post, reason: string): Promise<boolean> {
+  if (post.platform !== 'fbgroup' || !post.groupId || post.status === 'verifying' || /could not confirm/i.test(reason)) return false;
+  const tried = [...(post.groupsTried ?? []), post.groupId];
+  if (tried.length > 1) return false;
+  const since = Date.now() - 24 * 3600_000;
+  const recent = new Set(
+    (await db.posts.where('platform').equals('fbgroup').toArray())
+      .filter((p) => p.id !== post.id && ((p.status === 'published' && (p.publishedAt ?? 0) > since) || p.status === 'scheduled'))
+      .map((p) => p.groupId),
+  );
+  const next = (await db.groups.toArray()).find((g) => g.enabled && !tried.includes(g.id) && !recent.has(g.id));
+  if (!next) return false;
+  await finish(item.id);
+  await schedulePost(post.id, new Date());
+  await db.posts.update(post.id, { groupId: next.id, groupsTried: tried, error: `Moved from another group after: ${reason}`.slice(0, 300) });
+  await log('warn', 'groups', `Group post failed ${MAX_ATTEMPTS}× (${reason}) — moved to “${next.name}”`);
+  return true;
+}
+
 async function fail(item: QueueItem, post: Post, reason: string, deps: QueueDeps) {
   if (post.platform === 'fbgroup' && post.groupId && PERMANENT_GROUP_FAILURE.test(reason)) {
     await finish(item.id);
@@ -114,6 +137,7 @@ async function fail(item: QueueItem, post: Post, reason: string, deps: QueueDeps
     deps.notify('Facebook Group switched off', reason);
     return;
   }
+  if (await tryAnotherGroup(item, post, reason)) return;
   await setPost(post.id, { status: 'failed', error: reason });
   await finish(item.id);
   await log('error', 'publish', `${label(post.platform)}: ${reason}`);

@@ -119,6 +119,8 @@ export interface Post {
   accountId: string;
   /** platform 'fbgroup' only */
   groupId?: string;
+  /** fbgroup: groups this post already failed in (moved at most once) */
+  groupsTried?: string[];
   brandId?: string;
   title?: string;
   text: string;

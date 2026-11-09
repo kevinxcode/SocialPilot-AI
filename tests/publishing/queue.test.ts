@@ -331,3 +331,24 @@ test('a paused group is switched off and its waiting posts move to another group
   expect((await db.posts.get('p2'))?.groupId).toBe('g2');
   expect((await db.posts.get('p1'))?.groupId).toBe('g2');
 });
+
+test('a group post that keeps failing moves once to another group; ambiguous ones never move', async () => {
+  await db.groups.bulkAdd([
+    { id: 'g1', name: 'Flaky', url: 'https://www.facebook.com/groups/1', rules: '', enabled: true },
+    { id: 'g2', name: 'Live', url: 'https://www.facebook.com/groups/2', rules: '', enabled: true },
+  ]);
+  await addPost('p1', { platform: 'fbgroup', groupId: 'g1', attempts: 3 });
+  await schedulePost('p1', new Date(T0));
+  await db.posts.update('p1', { attempts: 3 });
+  const pub = fakePublisher([{ status: 'failed', reason: 'Post button not found' }]);
+  await processDue(T0, deps(pub));
+  const p = await db.posts.get('p1');
+  expect(p).toMatchObject({ groupId: 'g2', status: 'scheduled', attempts: 0, groupsTried: ['g1'] });
+  expect(await db.groups.get('g1')).toMatchObject({ enabled: true }); // a temporary error does not switch the group off
+  expect(await db.queue.where('postId').equals('p1').count()).toBe(1);
+
+  // Second group fails too → no third move, the post fails.
+  await db.posts.update('p1', { attempts: 3 });
+  await processDue(T0 + 3 * 60 * MIN, deps(fakePublisher([{ status: 'failed', reason: 'Post button not found' }])));
+  expect((await db.posts.get('p1'))?.status).toBe('failed');
+});
