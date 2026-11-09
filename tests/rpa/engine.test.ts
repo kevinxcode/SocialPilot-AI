@@ -186,3 +186,29 @@ test('findExisting recognises a post cut off by "See more"', async () => {
   const cfg = { postContainer: 'div[role="article"]', permalink: '/posts/' } as never;
   expect((await runFindExisting(cfg, fingerprint(full), { timeoutScale: 0.01, pollMs: 5 } as never)).found).toBe(true);
 });
+
+describe('optional prompts are dismissed, never the composer', () => {
+  test('"Speak to people directly → Not now" is closed; "Add Button" is never clicked', async () => {
+    const { dismissNags } = await import('@/services/publishing/rpa/dom');
+    document.body.innerHTML = `<div role="dialog"><span>Speak to people directly</span>
+      <div role="button" id="no">Not now</div><div role="button" id="add">Add Button</div></div>`;
+    const clicked: string[] = [];
+    document.querySelectorAll('[role="button"]').forEach((b) => b.addEventListener('click', () => clicked.push(b.id)));
+    expect(dismissNags()).toBe(true);
+    expect(clicked).toEqual(['no']);
+  });
+
+  test('a dialog with an editable text box (the composer) is left alone', async () => {
+    const { dismissNags } = await import('@/services/publishing/rpa/dom');
+    document.body.innerHTML = `<div role="dialog"><div contenteditable="true"></div><div role="button">Not now</div></div>`;
+    expect(dismissNags()).toBe(false);
+  });
+
+  test('waitFor clears the prompt while waiting', async () => {
+    const { waitFor } = await import('@/services/publishing/rpa/dom');
+    document.body.innerHTML = `<div role="dialog" id="nag"><div role="button">Lain kali</div></div>`;
+    document.querySelector('[role="button"]')!.addEventListener('click', () => document.getElementById('nag')!.remove());
+    await waitFor(() => false, 30, 5);
+    expect(document.getElementById('nag')).toBeNull();
+  });
+});

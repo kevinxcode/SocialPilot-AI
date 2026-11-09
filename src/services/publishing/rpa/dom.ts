@@ -19,6 +19,26 @@ function isHidden(el: Element): boolean {
   return false;
 }
 
+/** Buttons that only decline an optional upsell / tip ("Speak to people directly → Not now", notifications, etc.). */
+const DECLINE_RE = /^(not now|lain kali|nanti saja|tidak sekarang|bukan sekarang|maybe later|skip|lewati)$/i;
+
+/**
+ * Closes optional Facebook/Threads prompts that cover the page by clicking their decline button.
+ * Never touches the post composer (any dialog with an editable text box) and never clicks anything but a decline.
+ * Returns true when something was dismissed.
+ */
+export function dismissNags(root: ParentNode = document): boolean {
+  for (const dlg of Array.from(root.querySelectorAll('[role="dialog"], [role="alertdialog"]'))) {
+    if (isHidden(dlg) || dlg.querySelector('[contenteditable="true"], textarea, input[type="file"]')) continue;
+    const btn = Array.from(dlg.querySelectorAll<HTMLElement>('[role="button"], button')).find((b) => DECLINE_RE.test(visibleText(b)) && !isHidden(b));
+    if (btn) {
+      btn.click();
+      return true;
+    }
+  }
+  return false;
+}
+
 /** First element matching any selector (in order). Prefers the innermost match for text selectors. */
 export function findBySelectors<T extends Element = HTMLElement>(list: Sel[] | undefined, root: ParentNode = document): T | null {
   for (const s of list ?? []) {
@@ -39,6 +59,7 @@ export async function waitFor<T>(fn: () => T | null | undefined | false, timeout
     const v = fn();
     if (v) return v;
     if (Date.now() >= end) return null;
+    if (typeof document !== 'undefined') dismissNags(); // an upsell popup may be what we are waiting behind
     await sleep(pollMs);
   }
 }
