@@ -48,7 +48,7 @@ export class OpenRouterProvider implements AIProvider {
   }
 
   chat(req: ChatRequest, onToken?: (t: string) => void): Promise<ChatResult> {
-    return openAiChat('openrouter', this.cfg, req, onToken, HEADERS);
+    return openAiChat('openrouter', this.cfg, req, onToken, HEADERS, { reasoning: { exclude: true } });
   }
 
   private base() {

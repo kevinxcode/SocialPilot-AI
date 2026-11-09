@@ -9,6 +9,7 @@ export async function openAiChat(
   req: ChatRequest,
   onToken?: (t: string) => void,
   extraHeaders: Record<string, string> = {},
+  extraBody: Record<string, unknown> = {},
 ): Promise<ChatResult> {
   const messages = req.messages.map((m) =>
     m.images?.length
@@ -32,6 +33,7 @@ export async function openAiChat(
           max_tokens: req.maxTokens ?? 2048,
           stream: true,
           stream_options: { include_usage: true },
+          ...extraBody,
         }),
         signal: req.signal,
       },
@@ -50,6 +52,25 @@ export async function openAiChat(
   let usage: ChatResult['usage'];
   for await (const line of readLines(res)) {
     const l = line.trim();
+    if (l.startsWith('{')) {
+      // Some gateways answer HTTP 200 with a plain JSON error body instead of an SSE stream.
+      let j: { error?: { message?: string; code?: number; metadata?: { raw?: string } } } | undefined;
+      try {
+        j = JSON.parse(l);
+      } catch {
+        /* not JSON */
+      }
+      if (j?.error) {
+        const e = j.error;
+        const code = e.code ?? 0;
+        throw new ProviderError(
+          `${providerId} error ${code}: ${redact(`${e.message ?? ''}${e.metadata?.raw ? ` — ${e.metadata.raw}` : ''}`, cfg.apiKey).slice(0, 300)}`,
+          code || undefined,
+          code === 429 || code >= 500,
+        );
+      }
+      continue;
+    }
     if (!l.startsWith('data:')) continue;
     const data = l.slice(5).trim();
     if (data === '[DONE]') break;

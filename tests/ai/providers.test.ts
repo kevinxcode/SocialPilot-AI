@@ -121,3 +121,21 @@ test('Ollama retries without think flag when model rejects it', async () => {
   expect(r.text).toBe('ok');
   expect(bodies).toHaveLength(2);
 });
+
+test('OpenRouter surfaces a JSON error body returned with HTTP 200 (e.g. upstream 429)', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () =>
+    streamResponse(['{"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"model is temporarily rate-limited upstream"}}}']),
+  ));
+  const p = new OpenRouterProvider({ enabled: true, apiKey: 'k', baseUrl: 'https://x', timeoutMs: 1000 });
+  await expect(p.chat({ model: 'm', messages: [] })).rejects.toThrow(/429.*rate-limited/);
+});
+
+test('OpenRouter requests reasoning to be excluded from content', async () => {
+  const bodies: Record<string, unknown>[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (_u: string, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    return streamResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n']);
+  }));
+  await new OpenRouterProvider({ enabled: true, apiKey: 'k', baseUrl: 'https://x', timeoutMs: 1000 }).chat({ model: 'm', messages: [] });
+  expect(bodies[0].reasoning).toEqual({ exclude: true });
+});
