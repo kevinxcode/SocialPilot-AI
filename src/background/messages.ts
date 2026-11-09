@@ -3,7 +3,8 @@ import type { Platform } from '@/types/models';
 /** Messages from extension pages/popup to the service worker. */
 export type SwRequest =
   | { type: 'checkLogin'; platform: Platform }
-  | { type: 'dryRun'; platform: Platform; text: string; mediaIds?: string[] }
+  | { type: 'dryRun'; platform: Platform; text: string; mediaIds?: string[]; groupId?: string }
+  | { type: 'checkGroup'; groupId: string }
   | { type: 'publishNow'; postId: string }
   | { type: 'tick' }
   | { type: 'replanAutopilot' }

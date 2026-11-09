@@ -102,14 +102,26 @@ async function handle(msg: SwRequest): Promise<SwResponse> {
       const r = await publishers[msg.platform].preflight(acc);
       return { ok: r.ok, message: r.ok ? 'Logged in as the configured account' : r.reason };
     }
+    case 'checkGroup': {
+      const g = await db.groups.get(msg.groupId);
+      if (!g) return { ok: false, message: 'Group not found' };
+      const r = await publishers.fbgroup.preflight({ id: g.id, platform: 'fbgroup', name: g.name, profileUrl: g.url });
+      return { ok: r.ok, message: r.ok ? 'You can post in this group' : r.reason };
+    }
     case 'dryRun': {
-      const acc = await db.accounts.where('platform').equals(msg.platform).first();
-      if (!acc) return { ok: false, message: 'Save the account first' };
+      const acc =
+        msg.platform === 'fbgroup'
+          ? msg.groupId
+            ? { id: '' }
+            : undefined
+          : await db.accounts.where('platform').equals(msg.platform).first();
+      if (!acc) return { ok: false, message: msg.platform === 'fbgroup' ? 'Pick a group first' : 'Save the account first' };
       const now = Date.now();
       const temp: Post = {
         id: 'dry-run',
         platform: msg.platform,
         accountId: acc.id,
+        groupId: msg.groupId,
         text: msg.text,
         mediaIds: msg.mediaIds ?? [],
         status: 'processing',

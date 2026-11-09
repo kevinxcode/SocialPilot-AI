@@ -26,6 +26,16 @@ export class RpaPublisher implements Publisher {
     private confirmWindowMs = CONFIRM_WINDOW_MS,
   ) {}
 
+  /** Where to post: the configured account/Page, or the post's Facebook Group (as a pseudo-account). */
+  private async target(post?: Pick<Post, 'groupId'>): Promise<Account> {
+    if (this.platform === 'fbgroup') {
+      const g = post?.groupId ? await db.groups.get(post.groupId) : undefined;
+      if (!g || !g.enabled) throw new Error('Facebook Group not found or disabled in Social Accounts');
+      return { id: g.id, platform: 'fbgroup', name: g.name, profileUrl: g.url };
+    }
+    return this.account();
+  }
+
   private async account(): Promise<Account> {
     const acc = await db.accounts.where('platform').equals(this.platform).first();
     if (!acc?.profileUrl) throw new Error(`No ${this.platform === 'threads' ? 'Threads account' : 'Facebook Page'} configured in Social Accounts`);
@@ -47,7 +57,8 @@ export class RpaPublisher implements Publisher {
     return exclusive(async () => {
       try {
         const { res } = await this.preflightOn(acc);
-        await db.accounts.update(acc.id, { lastCheckOk: res.ok, lastCheckAt: Date.now(), lastCheckMessage: res.reason ?? 'OK' });
+        if (this.platform === 'fbgroup') await db.groups.update(acc.id, { lastCheckOk: res.ok, lastCheckMessage: res.reason ?? 'OK' });
+        else await db.accounts.update(acc.id, { lastCheckOk: res.ok, lastCheckAt: Date.now(), lastCheckMessage: res.reason ?? 'OK' });
         return { ok: res.ok, reason: res.reason };
       } catch (e) {
         return { ok: false, reason: (e as Error).message };
@@ -62,7 +73,7 @@ export class RpaPublisher implements Publisher {
       let keepOpen = false;
       let commandSent = false;
       try {
-        const acc = await this.account();
+        const acc = await this.target(post);
         const pre = await this.preflightOn(acc);
         let tabId = pre.tabId;
         const res = pre.res;
@@ -85,6 +96,7 @@ export class RpaPublisher implements Publisher {
           return { status: 'dry-run' };
         }
         if (r.status === 'failed') return { status: 'failed', reason: r.reason };
+        if (r.status === 'clicked' && r.pending) return { status: 'published', note: 'Pending admin approval in the group' };
         // clicked or unknown: confirm on the feed before claiming success
         const found = await this.confirm(acc, post.fingerprint);
         if (found.found) return { status: 'published', url: found.url };
@@ -112,10 +124,10 @@ export class RpaPublisher implements Publisher {
     return { found: false };
   }
 
-  findExisting(post: Pick<Post, 'fingerprint' | 'platform'>): Promise<{ found: boolean; url?: string }> {
+  findExisting(post: Pick<Post, 'fingerprint' | 'platform' | 'groupId'>): Promise<{ found: boolean; url?: string }> {
     return exclusive(async () => {
       try {
-        const acc = await this.account();
+        const acc = await this.target(post);
         const tabId = await this.driver.open(acc.profileUrl);
         return await this.driver.send<{ found: boolean; url?: string }>(tabId, { cmd: 'findExisting', platform: this.platform, fingerprint: post.fingerprint });
       } finally {
@@ -128,4 +140,5 @@ export class RpaPublisher implements Publisher {
 export const publishers: Record<Platform, Publisher> = {
   threads: new RpaPublisher('threads'),
   facebook: new RpaPublisher('facebook'),
+  fbgroup: new RpaPublisher('fbgroup'),
 };

@@ -7,6 +7,8 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'system',
   timezone: 'Asia/Jakarta',
   minGapMinutes: 60,
+  groupGapMinutes: 30,
+  autoPickMedia: true,
   router: {
     mode: 'auto',
     priority: ['ollama', 'nvidia', 'openrouter'],
@@ -21,7 +23,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autopilot: {
     enabled: false,
     paused: false,
-    platforms: { threads: true, facebook: true },
+    platforms: { threads: true, facebook: true, fbgroup: false },
     postsPerDay: 2,
     windowStart: '09:00',
     windowEnd: '19:00',

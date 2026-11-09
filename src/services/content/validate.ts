@@ -1,7 +1,7 @@
 import type { Platform } from '@/types/models';
 import { allowedFacts, extractFacts } from './brandContext';
 
-export const LIMITS: Record<Platform, number> = { threads: 500, facebook: 63_206 };
+export const LIMITS: Record<Platform, number> = { threads: 500, facebook: 63_206, fbgroup: 63_206 };
 
 export function visibleLength(text: string): number {
   return [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)].length;

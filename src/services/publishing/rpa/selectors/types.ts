@@ -11,12 +11,16 @@ export interface Sel {
 }
 
 export interface PlatformSelectors {
-  platform: 'threads' | 'facebook';
+  platform: 'threads' | 'facebook' | 'fbgroup';
   version: string;
   /** any match ⇒ logged out */
   loggedOut: Sel[];
   /** identity proof on own profile/page (e.g. "Edit profile" button) */
   ownProfileProof: Sel[];
+  /** shown to non-members of a group */
+  notMember?: Sel[];
+  /** notice that a post awaits admin approval (groups) */
+  pendingNotice?: Sel[];
   /** prompt to switch into the Page (Facebook) */
   switchToPage?: Sel[];
   /** composer opener when acting as the account/page */

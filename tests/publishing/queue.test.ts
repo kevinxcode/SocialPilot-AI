@@ -31,7 +31,7 @@ function fakePublisher(results: (PublishResult | 'throw')[], found: { found: boo
 let notes: string[];
 function deps(pub: Publisher, extra: Partial<QueueDeps> = {}): QueueDeps {
   return {
-    publishers: { threads: pub, facebook: pub },
+    publishers: { threads: pub, facebook: pub, fbgroup: pub },
     notify: (t, m) => notes.push(`${t}: ${m}`),
     loadMedia: async () => [],
     ...extra,

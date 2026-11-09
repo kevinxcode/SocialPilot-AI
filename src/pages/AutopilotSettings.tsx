@@ -46,6 +46,10 @@ export function AutopilotSettings() {
               <Switch checked={a.platforms.facebook} onChange={(v) => set({ platforms: { ...a.platforms, facebook: v } })} label="Facebook" />{' '}
               Facebook
             </label>
+            <label className="flex items-center gap-2">
+              <Switch checked={a.platforms.fbgroup} onChange={(v) => set({ platforms: { ...a.platforms, fbgroup: v } })} label="Facebook Groups" /> Groups
+              (1/day)
+            </label>
           </div>
         </Field>
         <Field label="Posts per day (per platform)">

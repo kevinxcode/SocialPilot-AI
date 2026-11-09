@@ -35,6 +35,8 @@ export interface StudioInput {
 }
 
 const PLATFORM_RULES: Record<Platform, string> = {
+  fbgroup:
+    'Facebook Group: community post, 60–200 words, helpful and conversational, no hard selling, at most 2 hashtags, end with a question to start discussion. No markdown.',
   threads:
     'Threads: conversational, short paragraphs, max 500 characters for the whole caption INCLUDING hashtags and CTA. Use at most 3 hashtags. No markdown.',
   facebook:

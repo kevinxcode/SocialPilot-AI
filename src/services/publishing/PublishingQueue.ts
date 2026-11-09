@@ -6,6 +6,7 @@ import { uid } from '@/lib/utils';
 import type { Platform, Post, QueueItem } from '@/types/models';
 import type { Publisher, PublishResult } from './Publisher';
 import { MAX_ATTEMPTS, nextRetryAt } from './RetryManager';
+import { platformLabel } from '@/lib/platform';
 
 export const LOCK_MS = 5 * 60_000;
 /** One RPA run (open, preflight, compose, confirm) can take several minutes. */
@@ -13,6 +14,7 @@ export const PUBLISH_LOCK_MS = 15 * 60_000;
 export const MISSED_TOLERANCE_MS = 5 * 60_000;
 export const SKIP_LATE_MS = 2 * 60 * 60_000;
 const DEDUPE_MS = 7 * 24 * 60 * 60_000;
+const DAY_MS = 24 * 60 * 60_000;
 
 export interface QueueDeps {
   publishers: Record<Platform, Publisher>;
@@ -26,7 +28,7 @@ export function zonedToUtc(local: string, timezone: string): Date {
   return fromZonedTime(local, timezone);
 }
 
-const label = (p: Platform) => (p === 'threads' ? 'Threads' : 'Facebook');
+const label = (p: Platform) => platformLabel(p);
 
 export async function schedulePost(postId: string, at: Date): Promise<void> {
   await db.transaction('rw', db.posts, db.queue, async () => {
@@ -121,7 +123,7 @@ export async function processDue(now: number, deps: QueueDeps): Promise<void> {
         else await release(item.id);
         continue;
       }
-      await processPostItem(item, now, settings.minGapMinutes, deps);
+      await processPostItem(item, now, settings.minGapMinutes, settings.groupGapMinutes, deps);
     } catch (e) {
       await log('error', 'queue', `Queue item ${item.id}: ${(e as Error).message}`);
       await release(item.id, now + 2 * 60_000);
@@ -129,7 +131,7 @@ export async function processDue(now: number, deps: QueueDeps): Promise<void> {
   }
 }
 
-async function processPostItem(item: QueueItem, now: number, minGapMinutes: number, deps: QueueDeps): Promise<void> {
+async function processPostItem(item: QueueItem, now: number, minGapMinutes: number, groupGapMinutes: number, deps: QueueDeps): Promise<void> {
   const post = await db.posts.get(item.postId ?? '');
   if (!post || post.status === 'cancelled' || post.status === 'published' || post.status === 'draft') {
     await finish(item.id);
@@ -159,10 +161,18 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     }
   }
 
-  // Minimum gap between posts on the same platform.
+  // Minimum gap between posts on the same platform (groups: shorter gap across groups, max 1 per group per 24 h).
   const last = await db.posts.where('platform').equals(post.platform).filter((p) => p.status === 'published' && !!p.publishedAt).reverse().sortBy('publishedAt');
+  if (post.platform === 'fbgroup') {
+    const sameGroup = last.find((p) => p.groupId === post.groupId);
+    if (sameGroup && now - sameGroup.publishedAt! < DAY_MS) {
+      await release(item.id, sameGroup.publishedAt! + DAY_MS);
+      await log('info', 'queue', 'Facebook Group: deferred — max 1 post per group per 24 h');
+      return;
+    }
+  }
   const lastAt = last[0]?.publishedAt ?? 0;
-  const gapMs = minGapMinutes * 60_000;
+  const gapMs = (post.platform === 'fbgroup' ? groupGapMinutes : minGapMinutes) * 60_000;
   if (lastAt && now - lastAt < gapMs) {
     await release(item.id, lastAt + gapMs);
     await log('info', 'queue', `${label(post.platform)}: deferred to respect ${minGapMinutes} min gap`);
@@ -203,6 +213,7 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   }
 
   if (res.status === 'published') {
+    if (res.note) await setPost(post.id, { note: res.note });
     await markPublished(item, { ...post, attempts }, now, res.url, deps);
     return;
   }

@@ -4,6 +4,7 @@ import { formatInTimeZone } from 'date-fns-tz';
 import { Empty, Select, Table, Tabs } from '@/components/ui';
 import { useSettings } from '@/hooks/useSettings';
 import { db } from '@/services/storage/db';
+import { platformLabel } from '@/lib/platform';
 import type { Platform, Post, PostStatus } from '@/types/models';
 import { PostEditor, StatusBadge } from './PostEditor';
 
@@ -47,7 +48,8 @@ export function ScheduledPostsPage({ initialView = 'queue' }: { initialView?: Vi
           <Select value={platform} onChange={(e) => setPlatform(e.target.value as '' | Platform)} aria-label="Platform filter">
             <option value="">All platforms</option>
             <option value="threads">Threads</option>
-            <option value="facebook">Facebook</option>
+            <option value="facebook">Facebook Page</option>
+            <option value="fbgroup">Facebook Group</option>
           </Select>
           <Select value={status} onChange={(e) => setStatus(e.target.value as '' | PostStatus)} aria-label="Status filter">
             <option value="">All statuses</option>
@@ -74,7 +76,7 @@ export function ScheduledPostsPage({ initialView = 'queue' }: { initialView?: Vi
             {list.map((p) => (
               <tr key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setOpen(p)}>
                 <td className="whitespace-nowrap">{fmt(view === 'history' ? (p.publishedAt ?? p.updatedAt) : p.scheduledAt)}</td>
-                <td>{p.platform === 'threads' ? 'Threads' : 'Facebook'}</td>
+                <td>{platformLabel(p.platform)}</td>
                 <td className="max-w-md truncate">{p.text}</td>
                 <td>
                   <StatusBadge post={p} />
@@ -85,7 +87,7 @@ export function ScheduledPostsPage({ initialView = 'queue' }: { initialView?: Vi
                       open post
                     </a>
                   ) : (
-                    (p.error ?? (p.nextRetryAt ? `retry ${fmt(p.nextRetryAt)}` : ''))
+                    (p.error ?? p.note ?? (p.nextRetryAt ? `retry ${fmt(p.nextRetryAt)}` : ''))
                   )}
                 </td>
               </tr>

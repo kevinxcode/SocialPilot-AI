@@ -12,6 +12,7 @@ import { schedulePost, zonedToUtc } from '@/services/publishing/PublishingQueue'
 import { sendToSw } from '@/background/messages';
 import type { Platform } from '@/types/models';
 import { MediaThumb } from './MediaLibrary';
+import { platformLabel } from '@/lib/platform';
 
 export interface PostActionsProps {
   text: string;
@@ -19,6 +20,7 @@ export interface PostActionsProps {
   brandId: string;
   title?: string;
   contentType?: string;
+  groupId?: string;
   disabled?: boolean;
   onDone?: () => void;
 }
@@ -83,14 +85,17 @@ export function PostActions(p: PostActionsProps) {
   const toast = useToast();
   const { settings } = useSettings();
   const tz = settings?.timezone ?? 'Asia/Jakarta';
-  const account = useLiveQuery(() => db.accounts.where('platform').equals(p.platform).first(), [p.platform]);
+  const account = useLiveQuery(
+    async () => (p.platform === 'fbgroup' ? (p.groupId ? db.groups.get(p.groupId) : undefined) : db.accounts.where('platform').equals(p.platform).first()),
+    [p.platform, p.groupId],
+  );
   const [mediaIds, setMediaIds] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const [when, setWhen] = useState(() => toZonedInput(Date.now() + 60 * 60_000, tz));
   const [busy, setBusy] = useState(false);
 
   const draft = () =>
-    createDraft({ platform: p.platform, text: p.text, brandId: p.brandId, title: p.title, contentType: p.contentType, mediaIds });
+    createDraft({ platform: p.platform, text: p.text, brandId: p.brandId, title: p.title, contentType: p.contentType, mediaIds, groupId: p.groupId });
 
   const schedule = async () => {
     const at = zonedToUtc(when, tz);
@@ -108,7 +113,7 @@ export function PostActions(p: PostActionsProps) {
     }
   };
   const publishNow = async () => {
-    if (!confirm(`Publish this post to ${p.platform === 'threads' ? 'Threads' : 'your Facebook Page'} now?`)) return;
+    if (!confirm(`Publish this post to ${platformLabel(p.platform)} now?`)) return;
     setBusy(true);
     try {
       const post = await draft();
@@ -130,7 +135,10 @@ export function PostActions(p: PostActionsProps) {
       <Button size="sm" disabled={blocked || !account} title={!account ? 'Set up the account in Social Accounts' : undefined} onClick={publishNow}>
         <Send className="h-3.5 w-3.5" /> Publish now
       </Button>
-      {!account && <span className="text-xs text-amber-600">No {p.platform === 'threads' ? 'Threads account' : 'Facebook Page'} set up</span>}
+      {!account && (
+        <span className="text-xs text-amber-600">{p.platform === 'fbgroup' ? 'Choose a group' : `No ${platformLabel(p.platform)} set up`}</span>
+      )}
+      {account && mediaIds.length === 0 && settings?.autoPickMedia && <span className="text-xs text-muted-foreground">image: auto-pick</span>}
       {p.disabled && <span className="text-xs text-red-500">Fix the warnings before scheduling</span>}
       <Dialog open={open} onClose={() => setOpen(false)} title="Schedule post">
         <Field label={`Date & time (${tz})`}>

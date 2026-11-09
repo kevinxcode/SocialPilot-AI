@@ -40,6 +40,10 @@ export function planDay(date: string, s: Settings): QueueItem[] {
       if (!a.platforms[platform]) continue;
       out.push({ id: uid(), kind: 'slot', platform, slotKey, contentType, runAt: base + offset * 60_000 });
     }
+    // Facebook Groups: one post per day, an hour after the first slot (the runner picks the group).
+    if (i === 0 && a.platforms.fbgroup) {
+      out.push({ id: uid(), kind: 'slot', platform: 'fbgroup', slotKey: `${date}#g`, contentType, runAt: base + 60 * 60_000 });
+    }
   }
   return out;
 }

@@ -13,3 +13,11 @@ test('Facebook Page URL requires page path and name', () => {
   expect(validateAccount('facebook', 'https://www.facebook.com/cuciqupro', ' ')).toMatch(/Page name/);
   expect(validateAccount('facebook', 'https://evil.example/cuciqupro', 'X')).toMatch(/facebook\.com/);
 });
+
+test('Facebook Group URL validation', async () => {
+  const { validateGroupUrl } = await import('@/pages/GroupsCard');
+  expect(validateGroupUrl('https://www.facebook.com/groups/pengusahalaundry')).toBeNull();
+  expect(validateGroupUrl('https://www.facebook.com/groups/123456789/')).toBeNull();
+  expect(validateGroupUrl('https://www.facebook.com/cuciqupro')).toMatch(/group URL/);
+  expect(validateGroupUrl('https://example.com/groups/x')).toMatch(/facebook\.com/);
+});

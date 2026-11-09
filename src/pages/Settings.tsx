@@ -1,6 +1,6 @@
 import { useRef, type ReactNode } from 'react';
 import { Download, Upload } from 'lucide-react';
-import { Button, Card, CardTitle, Field, Input, Select, useToast } from '@/components/ui';
+import { Button, Card, CardTitle, Field, Input, Select, Switch, useToast } from '@/components/ui';
 import { useSettings } from '@/hooks/useSettings';
 import { exportAll, importAll } from '@/services/storage/exportImport';
 import type { Language, Settings } from '@/types/models';
@@ -56,6 +56,19 @@ export function SettingsPage({ extra }: { extra?: ReactNode }) {
                 <option key={tz}>{tz}</option>
               ))}
             </Select>
+          </Field>
+          <Field label="Auto-pick an image when a post has none">
+            <div className="flex h-9 items-center">
+              <Switch checked={settings.autoPickMedia} onChange={(v) => update({ autoPickMedia: v })} label="Auto-pick image" />
+            </div>
+          </Field>
+          <Field label="Gap between posts to different Facebook Groups (min)">
+            <Input
+              type="number"
+              min={15}
+              value={settings.groupGapMinutes}
+              onChange={(e) => update({ groupGapMinutes: Math.max(15, Number(e.target.value) || 30) })}
+            />
           </Field>
           <Field label="Minimum gap between posts per platform (min)">
             <Input

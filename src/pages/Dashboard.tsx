@@ -4,6 +4,7 @@ import { AlertTriangle, Sparkles } from 'lucide-react';
 import { Badge, Button, Card, CardTitle, Empty, Switch } from '@/components/ui';
 import { useSettings } from '@/hooks/useSettings';
 import { db } from '@/services/storage/db';
+import { platformLabel } from '@/lib/platform';
 import { computeStats } from '@/services/analytics/stats';
 import { CostGuard } from '@/services/ai/CostGuard';
 import type { PageId } from '@/layouts/Sidebar';
@@ -58,7 +59,7 @@ export function DashboardPage({ navigate }: { navigate: (p: PageId) => void }) {
                   <span className="w-28 shrink-0 text-xs text-muted-foreground">
                     {p.scheduledAt ? formatInTimeZone(p.scheduledAt, tz, 'EEE dd MMM HH:mm') : '—'}
                   </span>
-                  <span className="w-16 shrink-0 text-xs">{p.platform === 'threads' ? 'Threads' : 'Facebook'}</span>
+                  <span className="w-16 shrink-0 text-xs">{platformLabel(p.platform)}</span>
                   <span className="min-w-0 flex-1 truncate">{p.text}</span>
                   <StatusBadge post={p} />
                 </li>

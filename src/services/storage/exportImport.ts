@@ -17,6 +17,7 @@ const schema = z.object({
   queue: z.array(row).default([]),
   aiUsage: z.array(row).default([]),
   logs: z.array(row).default([]),
+  groups: z.array(row).default([]),
 });
 
 const EXPORTED = TABLES.filter((t) => t !== 'media');

@@ -79,7 +79,7 @@ export function CalendarPage() {
       className={cn('block w-full truncate rounded px-1.5 py-0.5 text-left text-[11px]', toneClass[STATUS_TONE[p.status]])}
       title={p.text}
     >
-      {formatInTimeZone(at, tz, 'HH:mm')} {p.platform === 'threads' ? '@' : 'f'} {p.source === 'autopilot' ? '⚡' : ''}
+      {formatInTimeZone(at, tz, 'HH:mm')} {p.platform === 'threads' ? '@' : p.platform === 'fbgroup' ? 'g' : 'f'} {p.source === 'autopilot' ? '⚡' : ''}
       {p.text.slice(0, 40)}
     </button>
   );

@@ -21,7 +21,7 @@ export function computeStats(posts: Post[], range: { from: number; to: number },
   const inRange = (t?: number) => t != null && t >= range.from && t <= range.to;
   const pub = posts.filter((p) => p.status === 'published' && inRange(p.publishedAt));
   const failed = posts.filter((p) => p.status === 'failed' && inRange(p.updatedAt));
-  const perPlatform: Stats['perPlatform'] = { threads: { published: 0, failed: 0 }, facebook: { published: 0, failed: 0 } };
+  const perPlatform: Stats['perPlatform'] = { threads: { published: 0, failed: 0 }, facebook: { published: 0, failed: 0 }, fbgroup: { published: 0, failed: 0 } };
   const byContentType: Record<string, number> = {};
   for (const p of pub) {
     perPlatform[p.platform].published++;

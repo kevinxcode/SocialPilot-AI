@@ -1,4 +1,4 @@
-export type Platform = 'threads' | 'facebook';
+export type Platform = 'threads' | 'facebook' | 'fbgroup';
 export type ProviderId = 'openrouter' | 'ollama' | 'nvidia';
 export type RouterMode = 'manual' | 'auto' | 'freeOnly' | 'offline';
 export type PostStatus = 'draft' | 'scheduled' | 'processing' | 'verifying' | 'published' | 'failed' | 'cancelled';
@@ -63,6 +63,18 @@ export interface Account {
   lastCheckMessage?: string;
 }
 
+/** A Facebook Group the user is a member of. */
+export interface FbGroup {
+  id: string;
+  name: string;
+  url: string;
+  /** the group's posting rules, given to the AI and shown before posting */
+  rules: string;
+  enabled: boolean;
+  lastCheckOk?: boolean;
+  lastCheckMessage?: string;
+}
+
 export interface MediaItem {
   id: string;
   name: string;
@@ -92,6 +104,8 @@ export interface Post {
   id: string;
   platform: Platform;
   accountId: string;
+  /** platform 'fbgroup' only */
+  groupId?: string;
   brandId?: string;
   title?: string;
   text: string;
@@ -100,6 +114,8 @@ export interface Post {
   scheduledAt?: number;
   publishedAt?: number;
   url?: string;
+  /** informational, e.g. "Pending admin approval in the group" */
+  note?: string;
   fingerprint: string;
   source: 'manual' | 'autopilot';
   attempts: number;
@@ -175,6 +191,10 @@ export interface Settings {
   theme: 'light' | 'dark' | 'system';
   timezone: string;
   minGapMinutes: number;
+  /** minimum gap between posts to different Facebook Groups */
+  groupGapMinutes: number;
+  /** pick an image from the Media Library when a post has none */
+  autoPickMedia: boolean;
   activeBrandId?: string;
   router: {
     mode: RouterMode;

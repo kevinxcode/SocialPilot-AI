@@ -23,7 +23,7 @@ export interface PublishInput {
   dryRun: boolean;
   pageName?: string;
 }
-export type EngineResult = { status: 'clicked' } | { status: 'dry-run' } | { status: 'unknown'; reason: string } | { status: 'failed'; reason: string };
+export type EngineResult = { status: 'clicked'; pending?: boolean } | { status: 'dry-run' } | { status: 'unknown'; reason: string } | { status: 'failed'; reason: string };
 
 const T = (o: EngineOpts, ms: number) => Math.min(ms, o.timeoutMs ?? ms);
 
@@ -38,7 +38,11 @@ export async function runPreflight(
 ): Promise<PreflightResult> {
   const name = cfg.platform === 'threads' ? 'Threads' : 'Facebook';
   // Let the SPA render something meaningful first.
-  await waitFor(() => findBySelectors(cfg.loggedOut) || findBySelectors(cfg.ownProfileProof) || findBySelectors(cfg.switchToPage), T(o, 15_000), o.pollMs);
+  await waitFor(
+    () => findBySelectors(cfg.loggedOut) || findBySelectors(cfg.ownProfileProof) || findBySelectors(cfg.switchToPage) || findBySelectors(cfg.notMember),
+    T(o, 15_000),
+    o.pollMs,
+  );
   if (/\/login/.test(location.pathname) || findBySelectors(cfg.loggedOut)) {
     return { ok: false, reason: `Not logged in to ${name} in this Chrome profile. Log in, then try again.` };
   }
@@ -48,6 +52,12 @@ export async function runPreflight(
     const onProfile = location.pathname.toLowerCase().startsWith(`/@${handle}`);
     if (!onProfile || !findBySelectors(cfg.ownProfileProof)) {
       return { ok: false, reason: `Logged-in Threads account is not @${handle} (no "Edit profile" on its profile).` };
+    }
+    return { ok: true };
+  }
+  if (cfg.platform === 'fbgroup') {
+    if (!findBySelectors(cfg.ownProfileProof)) {
+      return { ok: false, reason: 'Not a member of this group, or posting is turned off for you. Join the group first.' };
     }
     return { ok: true };
   }
@@ -143,7 +153,11 @@ export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o:
   // From here on the outcome is ambiguous unless the composer closes — never report 'failed'.
   try {
     const closed = await waitFor(() => !document.contains(dialog) || (dialog as HTMLElement).getAttribute('aria-hidden') === 'true', T(o, 60_000), o.pollMs);
-    return closed ? { status: 'clicked' } : { status: 'unknown', reason: 'Composer did not close after clicking Post' };
+    if (!closed) return { status: 'unknown', reason: 'Composer did not close after clicking Post' };
+    if (cfg.pendingNotice && (await waitFor(() => findBySelectors(cfg.pendingNotice), T(o, 4000), o.pollMs))) {
+      return { status: 'clicked', pending: true };
+    }
+    return { status: 'clicked' };
   } catch (e) {
     return { status: 'unknown', reason: `Error after clicking Post: ${(e as Error).message}` };
   }

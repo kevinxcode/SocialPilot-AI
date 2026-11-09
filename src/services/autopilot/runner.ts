@@ -7,7 +7,8 @@ import { pickMedia } from '@/services/media/pick';
 import { createDraft } from '@/services/publishing/posts';
 import { cancel, schedulePost } from '@/services/publishing/PublishingQueue';
 import { aiRouter } from '@/services/ai/AIRouter';
-import type { ProviderId, QueueItem } from '@/types/models';
+import type { FbGroup, Platform, ProviderId, QueueItem } from '@/types/models';
+import { platformLabel } from '@/lib/platform';
 
 type Notify = (title: string, message: string, id?: string, buttons?: { title: string }[]) => void;
 export interface RunnerCtx {
@@ -16,7 +17,7 @@ export interface RunnerCtx {
   onScheduled?: () => void;
 }
 
-const label = (p: string) => (p === 'threads' ? 'Threads' : 'Facebook');
+const label = (p: Platform) => platformLabel(p);
 
 function hash(s: string): number {
   let h = 0;
@@ -44,8 +45,14 @@ export async function runSlot(item: QueueItem, now: number, ctx: RunnerCtx): Pro
     await log('info', 'autopilot', `${label(item.platform)} slot ${item.slotKey} dropped (autopilot off or paused)`);
     return;
   }
-  const account = await db.accounts.where('platform').equals(item.platform).first();
-  if (!account) return skip(item, `No ${item.platform === 'threads' ? 'Threads account' : 'Facebook Page'} configured`, ctx);
+  let group: FbGroup | undefined;
+  if (item.platform === 'fbgroup') {
+    group = await pickGroup(now);
+    if (!group) return skip(item, 'No enabled Facebook Group available (each group gets at most 1 post per 24 h)', ctx);
+  } else {
+    const account = await db.accounts.where('platform').equals(item.platform).first();
+    if (!account) return skip(item, `No ${label(item.platform)} configured`, ctx);
+  }
   const brandId = await activeBrandId(s.activeBrandId);
   if (!brandId) return skip(item, 'No brand in the knowledge base', ctx);
 
@@ -63,7 +70,13 @@ export async function runSlot(item: QueueItem, now: number, ctx: RunnerCtx): Pro
     tone: '',
     cta: '',
     hashtags: '',
-    extra: idea ? undefined : `Pick a fresh, specific ${contentTypeLabel(contentType)} topic relevant to the audience of this brand.`,
+    extra:
+      [
+        idea ? '' : `Pick a fresh, specific ${contentTypeLabel(contentType)} topic relevant to the audience of this brand.`,
+        group ? groupInstructions(group) : '',
+      ]
+        .filter(Boolean)
+        .join('\n') || undefined,
   };
 
   let caption = '';
@@ -90,6 +103,8 @@ export async function runSlot(item: QueueItem, now: number, ctx: RunnerCtx): Pro
   const tags = [contentType, ...contentType.split('-'), ...(idea?.title.toLowerCase().split(/\s+/) ?? [])];
   const media = a.attachMedia ? await pickMedia(tags) : null;
   const post = await createDraft({
+    autoMedia: false,
+    groupId: group?.id,
     platform: item.platform,
     text: caption,
     brandId,
@@ -113,6 +128,30 @@ export async function runSlot(item: QueueItem, now: number, ctx: RunnerCtx): Pro
     );
   }
   ctx.onScheduled?.();
+}
+
+export function groupInstructions(g: FbGroup): string {
+  return [
+    `This post goes to the Facebook Group "${g.name}". Write for the community: helpful and educational, not a sales pitch.`,
+    'Invite discussion (end with a question). Mention the brand at most once, softly.',
+    g.rules.trim() ? `Group rules you MUST follow: ${g.rules.trim()}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+/** Enabled group with the oldest last post, excluding groups posted to (or scheduled) in the last 24 h. */
+async function pickGroup(now: number): Promise<FbGroup | undefined> {
+  const groups = (await db.groups.toArray()).filter((g) => g.enabled);
+  const posts = await db.posts.where('platform').equals('fbgroup').toArray();
+  const lastAt = (g: FbGroup) =>
+    Math.max(
+      0,
+      ...posts
+        .filter((p) => p.groupId === g.id && (p.status === 'published' || p.status === 'scheduled'))
+        .map((p) => p.publishedAt ?? p.scheduledAt ?? 0),
+    );
+  return groups.filter((g) => now - lastAt(g) >= 24 * 60 * 60_000).sort((x, y) => lastAt(x) - lastAt(y))[0];
 }
 
 export async function reviewDecision(postId: string, approve: boolean, ctx: RunnerCtx): Promise<void> {

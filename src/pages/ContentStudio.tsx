@@ -13,6 +13,7 @@ import type { GenerateResult } from '@/services/ai/AIRouter';
 import type { Language, Platform } from '@/types/models';
 import { getActiveBrandId } from './BrandKnowledge';
 import { PostActions, type PostActionsProps } from './PostActions';
+import { groupInstructions } from '@/services/autopilot/runner';
 
 const TRANSFORMS: { id: TransformAction; label: string }[] = [
   { id: 'rewrite', label: 'Rewrite' },
@@ -127,6 +128,9 @@ export function ContentStudioPage() {
     website: '',
   });
   const [variations, setVariations] = useState<Variation[]>([]);
+  const groups = useLiveQuery(() => db.groups.toArray(), []) ?? [];
+  const [groupId, setGroupId] = useState('');
+  const group = groups.find((g) => g.id === groupId);
   const [meta, setMeta] = useState<GenerateResult | undefined>();
   const [loading, setLoading] = useState(false);
   const [streamed, setStreamed] = useState('');
@@ -144,11 +148,12 @@ export function ContentStudioPage() {
 
   const generate = async () => {
     if (!brandId) return toast('Create a brand first', 'err');
+    if (input.platform === 'fbgroup' && !group) return toast('Choose a Facebook Group first', 'err');
     abortRef.current = new AbortController();
     setLoading(true);
     setStreamed('');
     try {
-      const out = await generateVariations({ ...input, brandId }, 3, {
+      const out = await generateVariations({ ...input, brandId, extra: group ? groupInstructions(group) : undefined }, 3, {
         signal: abortRef.current.signal,
         onToken: (t) => setStreamed((s) => (s + t).slice(-400)),
       });
@@ -182,6 +187,7 @@ export function ContentStudioPage() {
             <Select value={input.platform} onChange={(e) => set('platform', e.target.value as Platform)}>
               <option value="threads">Threads</option>
               <option value="facebook">Facebook Page</option>
+              <option value="fbgroup">Facebook Group</option>
             </Select>
           </Field>
           <Field label="Language">
@@ -191,6 +197,19 @@ export function ContentStudioPage() {
             </Select>
           </Field>
         </div>
+        {input.platform === 'fbgroup' && (
+          <Field label="Group">
+            <Select value={groupId} onChange={(e) => setGroupId(e.target.value)}>
+              <option value="">— choose a group —</option>
+              {groups.filter((g) => g.enabled).map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </Select>
+            {!groups.length && <p className="mt-1 text-xs text-amber-600">Add groups in Social Accounts first.</p>}
+          </Field>
+        )}
         <Field label="Content type">
           <Select value={input.contentType} onChange={(e) => set('contentType', e.target.value)}>
             {CONTENT_TYPES.map((c) => (
@@ -249,13 +268,13 @@ export function ContentStudioPage() {
                   variant="secondary"
                   disabled={!p.text.trim()}
                   onClick={async () => {
-                    await createDraft({ platform: p.platform, text: p.text, brandId, title: p.title, contentType: input.contentType, providerId: meta?.providerId, modelId: meta?.modelId });
+                    await createDraft({ platform: p.platform, text: p.text, brandId, title: p.title, contentType: input.contentType, providerId: meta?.providerId, modelId: meta?.modelId, groupId: group?.id });
                     toast('Draft saved');
                   }}
                 >
                   <Save className="h-3.5 w-3.5" /> Save draft
                 </Button>
-                <PostActions {...p} contentType={input.contentType} />
+                <PostActions {...p} contentType={input.contentType} groupId={group?.id} />
               </>
             )}
           />

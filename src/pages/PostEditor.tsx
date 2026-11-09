@@ -9,6 +9,7 @@ import { validatePost, visibleLength, LIMITS } from '@/services/content/validate
 import { sendToSw } from '@/background/messages';
 import type { Post, PostStatus } from '@/types/models';
 import { MediaPicker, toZonedInput } from './PostActions';
+import { platformLabel } from '@/lib/platform';
 
 export const STATUS_TONE: Record<PostStatus, 'default' | 'success' | 'warning' | 'danger' | 'info'> = {
   draft: 'default',
@@ -80,7 +81,7 @@ export function PostEditor({ post, onClose }: { post: Post | null; onClose: () =
   };
 
   return (
-    <Dialog open onClose={onClose} title={`${post.platform === 'threads' ? 'Threads' : 'Facebook'} post`}>
+    <Dialog open onClose={onClose} title={`${platformLabel(post.platform)} post`}>
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <StatusBadge post={post} />
         {post.attempts > 0 && <span>attempts {post.attempts}</span>}
@@ -91,6 +92,7 @@ export function PostEditor({ post, onClose }: { post: Post | null; onClose: () =
           </a>
         )}
       </div>
+      {post.note && <p className="mb-2 rounded bg-amber-500/10 p-2 text-xs text-amber-700">{post.note}</p>}
       {post.error && <p className="mb-2 rounded bg-red-500/10 p-2 text-xs text-red-600">{post.error}</p>}
       <Textarea rows={9} value={text} disabled={!canEdit} onChange={(e) => setText(e.target.value)} aria-label="Post text" />
       <div className="mt-1 flex justify-between text-xs">
