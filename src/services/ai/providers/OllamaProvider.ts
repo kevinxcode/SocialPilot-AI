@@ -36,19 +36,24 @@ export class OllamaProvider implements AIProvider {
     const res = await this.call('/api/tags', {}, 15_000);
     const j = (await res.json()) as { models?: { name: string; details?: { families?: string[] } }[] };
     const list = j.models ?? [];
-    return Promise.all(
-      list.map(async (m) => {
+    const all = await Promise.all(
+      list.map(async (m): Promise<AIModel | null> => {
         let vision = (m.details?.families ?? []).includes('clip');
+        let chat = true;
         try {
           const s = await this.call('/api/show', { method: 'POST', body: JSON.stringify({ model: m.name }) }, 15_000);
           const info = (await s.json()) as { capabilities?: string[] };
-          if (info.capabilities) vision = info.capabilities.includes('vision');
+          if (info.capabilities) {
+            vision = info.capabilities.includes('vision');
+            chat = info.capabilities.includes('completion');
+          }
         } catch {
           /* keep heuristic */
         }
-        return { key: `ollama:${m.name}`, id: m.name, providerId: 'ollama' as const, name: m.name, isFree: true, vision };
+        return chat ? { key: `ollama:${m.name}`, id: m.name, providerId: 'ollama' as const, name: m.name, isFree: true, vision } : null;
       }),
     );
+    return all.filter((m): m is AIModel => m !== null);
   }
 
   async test(): Promise<TestResult> {
@@ -71,21 +76,31 @@ export class OllamaProvider implements AIProvider {
       content: m.content,
       ...(m.images?.length ? { images: m.images.map((d) => d.replace(/^data:[^;]+;base64,/, '')) } : {}),
     }));
-    const res = await this.call(
-      '/api/chat',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          model: req.model,
-          messages,
-          stream: true,
-          options: { temperature: req.temperature ?? 0.8, num_predict: req.maxTokens ?? 2048 },
-        }),
-        signal: req.signal,
-      },
-      this.cfg.timeoutMs,
-      req.model,
-    );
+    const send = (think: boolean) =>
+      this.call(
+        '/api/chat',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            model: req.model,
+            messages,
+            stream: true,
+            // Reasoning models (qwen3, deepseek-r1) would otherwise spend the token budget on hidden "thinking".
+            ...(think ? {} : { think: false }),
+            options: { temperature: req.temperature ?? 0.8, num_predict: req.maxTokens ?? 2048 },
+          }),
+          signal: req.signal,
+        },
+        this.cfg.timeoutMs,
+        req.model,
+      );
+    let res: Response;
+    try {
+      res = await send(false);
+    } catch (e) {
+      if (e instanceof ProviderError && /support thinking/i.test(e.message)) res = await send(true);
+      else throw e;
+    }
     let text = '';
     let usage: ChatResult['usage'];
     for await (const line of readLines(res)) {

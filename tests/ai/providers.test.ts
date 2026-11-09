@@ -51,10 +51,10 @@ test('OpenRouter SSE stream accumulates tokens', async () => {
 
 test('Ollama lists models with vision capability and streams NDJSON', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
-    if (url.endsWith('/api/tags')) return json({ models: [{ name: 'llava:7b' }, { name: 'qwen2.5:7b' }] });
+    if (url.endsWith('/api/tags')) return json({ models: [{ name: 'llava:7b' }, { name: 'qwen2.5:7b' }, { name: 'bge-m3' }] });
     if (url.endsWith('/api/show')) {
       const name = JSON.parse(String(init?.body)).model;
-      return json({ capabilities: name.startsWith('llava') ? ['completion', 'vision'] : ['completion'] });
+      return json({ capabilities: name.startsWith('llava') ? ['completion', 'vision'] : name === 'bge-m3' ? ['embedding'] : ['completion'] });
     }
     return streamResponse(['{"message":{"content":"Ha"},"done":false}\n{"message":{"content":"lo"},', '"done":false}\n{"done":true,"prompt_eval_count":4,"eval_count":2}\n']);
   }));
@@ -62,6 +62,7 @@ test('Ollama lists models with vision capability and streams NDJSON', async () =
   const models = await p.listModels();
   expect(models.find((m) => m.id === 'llava:7b')).toMatchObject({ vision: true, isFree: true });
   expect(models.find((m) => m.id === 'qwen2.5:7b')?.vision).toBe(false);
+  expect(models.find((m) => m.id === 'bge-m3')).toBeUndefined();
   const r = await p.chat({ model: 'qwen2.5:7b', messages: [{ role: 'user', content: 'x' }] });
   expect(r.text).toBe('Halo');
   expect(r.usage).toEqual({ in: 4, out: 2 });
@@ -96,4 +97,27 @@ test('API key never appears in thrown errors', async () => {
   const p = new OpenRouterProvider({ enabled: true, apiKey: 'sk-secret-123', baseUrl: 'https://x', timeoutMs: 1000 });
   await expect(p.chat({ model: 'm', messages: [] })).rejects.toThrow(/401/);
   await expect(p.chat({ model: 'm', messages: [] })).rejects.not.toThrow(/sk-secret-123/);
+});
+
+test('Ollama chat disables thinking so reasoning models return content', async () => {
+  const bodies: Record<string, unknown>[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (_u: string, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    return streamResponse(['{"message":{"content":"ok"},"done":true}\n']);
+  }));
+  await new OllamaProvider({ enabled: true, baseUrl: 'http://h', timeoutMs: 1000 }).chat({ model: 'qwen3:8b', messages: [] });
+  expect(bodies[0].think).toBe(false);
+});
+
+test('Ollama retries without think flag when model rejects it', async () => {
+  const bodies: Record<string, unknown>[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (_u: string, init?: RequestInit) => {
+    const b = JSON.parse(String(init?.body));
+    bodies.push(b);
+    if ('think' in b) return json({ error: '"old" does not support thinking' }, 400);
+    return streamResponse(['{"message":{"content":"ok"},"done":true}\n']);
+  }));
+  const r = await new OllamaProvider({ enabled: true, baseUrl: 'http://h', timeoutMs: 1000 }).chat({ model: 'old', messages: [] });
+  expect(r.text).toBe('ok');
+  expect(bodies).toHaveLength(2);
 });
