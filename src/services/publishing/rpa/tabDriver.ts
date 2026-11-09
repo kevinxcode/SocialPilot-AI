@@ -4,6 +4,7 @@
  */
 import contentScript from '@/content/rpa.ts?script';
 import type { RpaCommand } from '../Publisher';
+import { waitForContentScript } from './ready';
 
 const KEY = 'rpaWindow';
 
@@ -60,6 +61,7 @@ export const TabDriver = {
     }
     await sleep(1500 + Math.random() * 1500); // let the SPA hydrate
     await chrome.scripting.executeScript({ target: { tabId: tabId! }, files: [contentScript] });
+    await waitForContentScript(() => chrome.tabs.sendMessage(tabId!, { cmd: 'ping', __rpa: true }));
     return tabId!;
   },
 
