@@ -6,6 +6,7 @@ import {
   Clock,
   Image,
   Hash,
+  Users,
   LayoutDashboard,
   Lightbulb,
   Settings as SettingsIcon,
@@ -24,6 +25,7 @@ export type PageId =
   | 'scheduled'
   | 'media'
   | 'topics'
+  | 'groups'
   | 'accounts'
   | 'analytics'
   | 'brand'
@@ -39,6 +41,7 @@ export const NAV: { id: PageId; icon: LucideIcon }[] = [
   { id: 'media', icon: Image },
   { id: 'topics', icon: Hash },
   { id: 'accounts', icon: Share2 },
+  { id: 'groups', icon: Users },
   { id: 'analytics', icon: BarChart3 },
   { id: 'brand', icon: BookOpen },
   { id: 'providers', icon: Bot },

@@ -8,6 +8,7 @@ import { ContentStudioPage } from '@/pages/ContentStudio';
 import { ResearchPage } from '@/pages/Research';
 import { MediaLibraryPage } from '@/pages/MediaLibrary';
 import { TopicsPage } from '@/pages/Topics';
+import { GroupsPage } from '@/pages/GroupsCard';
 import { SocialAccountsPage } from '@/pages/SocialAccounts';
 import { ScheduledPostsPage } from '@/pages/ScheduledPosts';
 import { CalendarPage } from '@/pages/Calendar';
@@ -24,6 +25,7 @@ export const PAGES: Partial<Record<PageId, Render>> = {
   research: () => <ResearchPage />,
   media: () => <MediaLibraryPage />,
   topics: () => <TopicsPage />,
+  groups: () => <GroupsPage />,
   accounts: () => <SocialAccountsPage />,
   scheduled: () => <ScheduledPostsPage />,
   calendar: () => <CalendarPage />,

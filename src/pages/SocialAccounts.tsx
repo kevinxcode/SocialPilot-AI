@@ -6,7 +6,6 @@ import { db } from '@/services/storage/db';
 import { sendToSw } from '@/background/messages';
 import { uid } from '@/lib/utils';
 import type { Account, Platform } from '@/types/models';
-import { GroupsCard } from './GroupsCard';
 
 export function validateAccount(platform: Platform, profileUrl: string, name: string): string | null {
   let u: URL;
@@ -132,7 +131,6 @@ export function SocialAccountsPage() {
       </Card>
       <AccountCard platform="threads" />
       <AccountCard platform="facebook" />
-      <GroupsCard />
     </div>
   );
 }

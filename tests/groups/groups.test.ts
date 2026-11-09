@@ -214,3 +214,10 @@ test('collectGroups reads joined groups and skips nav links', async () => {
     { name: 'UMKM Kaltim', url: 'https://www.facebook.com/groups/123456' },
   ]);
 });
+
+test('cleanGroupName strips activity suffixes', async () => {
+  const { cleanGroupName } = await import('@/services/publishing/rpa/engine');
+  expect(cleanGroupName('Aplikasi Laundry TerbaikLast active 3 days ago')).toBe('Aplikasi Laundry Terbaik');
+  expect(cleanGroupName('UMKM Kaltim Terakhir aktif 2 jam lalu')).toBe('UMKM Kaltim');
+  expect(cleanGroupName('LOKER BATAM')).toBe('LOKER BATAM');
+});

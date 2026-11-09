@@ -288,6 +288,14 @@ export async function runScrapeFeed(cfg: PlatformSelectors, max: number, o: Engi
   return { posts: posts.sort((x, y) => y.engagement - x.engagement) };
 }
 
+/** Strips activity suffixes Facebook glues to the name ("…Last active 3 days ago"). */
+export function cleanGroupName(raw: string): string {
+  return raw
+    .replace(/\s+/g, ' ')
+    .replace(/\s*(last active|you last visited|terakhir aktif|anda terakhir mengunjungi|aktif \d|\d+ (new )?posts?|\d+ postingan baru).*$/i, '')
+    .trim();
+}
+
 const NOT_GROUP = new Set(['joins', 'feed', 'discover', 'create', 'search', 'notifications', 'your_groups', 'category', 'groups']);
 
 /** Collects joined groups from facebook.com/groups/joins (read-only). */
@@ -302,7 +310,7 @@ export function collectGroups(root: ParentNode = document): { name: string; url:
     }
     const m = u.pathname.match(/^\/groups\/([^/]+)\/?$/);
     if (!m || NOT_GROUP.has(m[1])) continue;
-    const name = (a.textContent ?? '').replace(/\s+/g, ' ').trim();
+    const name = cleanGroupName(a.textContent ?? '');
     if (!name || /^(lihat grup|view group|kunjungi|visit)/i.test(name)) {
       if (!byId.has(m[1])) byId.set(m[1], '');
       continue;

@@ -1,3 +1,4 @@
+import { cleanGroupName } from '@/services/publishing/rpa/engine';
 import { uid } from '@/lib/utils';
 import { formatInTimeZone } from 'date-fns-tz';
 import { maybeDailyTrending, researchTrending } from '@/services/content/trending';
@@ -178,6 +179,11 @@ async function handle(msg: SwRequest): Promise<SwResponse> {
     case 'scanGroups': {
       try {
         const found = await scrapeJoinedGroups();
+        // Tidy names saved by an earlier scan ("…Last active 3 days ago").
+        for (const g of await db.groups.toArray()) {
+          const n = cleanGroupName(g.name);
+          if (n && n !== g.name) await db.groups.update(g.id, { name: n });
+        }
         if (!found.length) return { ok: false, message: 'No groups found — are you logged in to Facebook and a member of any group?' };
         const existing = new Set((await db.groups.toArray()).map((g) => g.url.replace(/\/$/, '').toLowerCase()));
         const fresh = found.filter((g) => !existing.has(g.url.toLowerCase()));
