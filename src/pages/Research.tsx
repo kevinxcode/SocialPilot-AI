@@ -1,27 +1,44 @@
-import { useEffect, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { BookmarkPlus, Globe, Loader2, Trash2 } from 'lucide-react';
-import { Badge, Button, Card, CardTitle, Empty, Field, Input, Select, Textarea, useToast } from '@/components/ui';
-import { useSettings } from '@/hooks/useSettings';
-import { db } from '@/services/storage/db';
-import { research } from '@/services/content/generate';
-import { RESEARCH_KINDS, type ResearchKind } from '@/services/content/prompts';
-import { uid } from '@/lib/utils';
-import type { Language } from '@/types/models';
-import { getActiveBrandId } from './BrandKnowledge';
+import { useEffect, useState } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
+import { BookmarkPlus, Globe, Loader2, Trash2 } from "lucide-react";
+import {
+  Badge,
+  Button,
+  Card,
+  CardTitle,
+  Empty,
+  Field,
+  Input,
+  Select,
+  Textarea,
+  useToast,
+} from "@/components/ui";
+import { useSettings } from "@/hooks/useSettings";
+import { db } from "@/services/storage/db";
+import { research } from "@/services/content/generate";
+import { RESEARCH_KINDS, type ResearchKind } from "@/services/content/prompts";
+import { uid } from "@/lib/utils";
+import type { Language } from "@/types/models";
+import { getActiveBrandId } from "./BrandKnowledge";
+import { queueIdeas } from "@/services/content/ideasToQueue";
+import type { Platform } from "@/types/models";
 
 export function htmlToText(html: string): string {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  doc.querySelectorAll('script,style,noscript,svg,nav,footer').forEach((n) => n.remove());
-  return (doc.body?.textContent ?? '').replace(/\s+/g, ' ').trim();
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  doc
+    .querySelectorAll("script,style,noscript,svg,nav,footer")
+    .forEach((n) => n.remove());
+  return (doc.body?.textContent ?? "").replace(/\s+/g, " ").trim();
 }
 
 async function fetchPublicPage(url: string): Promise<string> {
   const u = new URL(url);
   const origin = `${u.protocol}//${u.hostname}/*`;
-  const granted = (await chrome.permissions.contains({ origins: [origin] })) || (await chrome.permissions.request({ origins: [origin] }));
-  if (!granted) throw new Error('Permission to read that site was not granted');
-  const res = await fetch(url, { credentials: 'omit' });
+  const granted =
+    (await chrome.permissions.contains({ origins: [origin] })) ||
+    (await chrome.permissions.request({ origins: [origin] }));
+  if (!granted) throw new Error("Permission to read that site was not granted");
+  const res = await fetch(url, { credentials: "omit" });
   if (!res.ok) throw new Error(`Could not fetch page (HTTP ${res.status})`);
   return htmlToText(await res.text());
 }
@@ -29,28 +46,78 @@ async function fetchPublicPage(url: string): Promise<string> {
 export function ResearchPage() {
   const { settings } = useSettings();
   const toast = useToast();
-  const [brandId, setBrandId] = useState('');
-  const [kind, setKind] = useState<ResearchKind>('topics');
-  const [focus, setFocus] = useState('');
-  const [language, setLanguage] = useState<Language>('id');
-  const [source, setSource] = useState('');
-  const [url, setUrl] = useState('');
+  const [brandId, setBrandId] = useState("");
+  const [kind, setKind] = useState<ResearchKind>("topics");
+  const [focus, setFocus] = useState("");
+  const [language, setLanguage] = useState<Language>("id");
+  const [source, setSource] = useState("");
+  const [url, setUrl] = useState("");
   const [results, setResults] = useState<{ title: string; body: string }[]>([]);
   const [loading, setLoading] = useState(false);
-  const ideas = useLiveQuery(() => db.ideas.orderBy('createdAt').reverse().toArray(), []) ?? [];
+  const ideas =
+    useLiveQuery(() => db.ideas.orderBy("createdAt").reverse().toArray(), []) ??
+    [];
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [qPlatform, setQPlatform] = useState<Platform>("threads");
+  const [queuing, setQueuing] = useState<number | null>(null);
+  const allChecked = ideas.length > 0 && ideas.every((i) => sel.has(i.id));
+  const toggle = (id: string) =>
+    setSel((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const addToQueue = async () => {
+    const ids = ideas.filter((i) => sel.has(i.id)).map((i) => i.id);
+    if (!ids.length) return;
+    if (
+      !confirm(
+        `Generate and schedule ${ids.length} ${qPlatform} posts (spaced by the minimum gap, inside the autopilot window)?`,
+      )
+    )
+      return;
+    setQueuing(0);
+    try {
+      const r = await queueIdeas(ids, {
+        platform: qPlatform,
+        onProgress: setQueuing,
+      });
+      toast(
+        `Scheduled ${r.queued} posts${r.failed.length ? ` · ${r.failed.length} failed: ${r.failed[0]}` : ""}`,
+        r.failed.length && !r.queued ? "err" : undefined,
+      );
+      setSel(new Set());
+    } finally {
+      setQueuing(null);
+    }
+  };
 
   useEffect(() => {
-    getActiveBrandId(settings?.activeBrandId).then((id) => id && setBrandId(id));
+    getActiveBrandId(settings?.activeBrandId).then(
+      (id) => id && setBrandId(id),
+    );
   }, [settings?.activeBrandId]);
 
   const run = async () => {
-    if (!brandId) return toast('Create a brand first', 'err');
-    if (kind === 'competitor' && !source.trim()) return toast('Paste competitor content or fetch a public URL first', 'err');
+    if (!brandId) return toast("Create a brand first", "err");
+    if (kind === "competitor" && !source.trim())
+      return toast(
+        "Paste competitor content or fetch a public URL first",
+        "err",
+      );
     setLoading(true);
     try {
-      setResults(await research(kind, { brandId, language, focus, source: url ? `${source}\n\n(Source: ${url})` : source }));
+      setResults(
+        await research(kind, {
+          brandId,
+          language,
+          focus,
+          source: url ? `${source}\n\n(Source: ${url})` : source,
+        }),
+      );
     } catch (e) {
-      toast((e as Error).message, 'err');
+      toast((e as Error).message, "err");
     } finally {
       setLoading(false);
     }
@@ -61,25 +128,36 @@ export function ResearchPage() {
       setSource(text.slice(0, 12000));
       toast(`Fetched ${text.length} characters`);
     } catch (e) {
-      toast((e as Error).message, 'err');
+      toast((e as Error).message, "err");
     }
   };
   const save = async (r: { title: string; body: string }) => {
-    const ref = kind === 'competitor' && url ? `\n\nSource: ${url}` : '';
-    await db.ideas.add({ id: uid(), brandId, title: r.title, body: r.body + ref, kind, createdAt: Date.now() });
-    toast('Saved as content idea');
+    const ref = kind === "competitor" && url ? `\n\nSource: ${url}` : "";
+    await db.ideas.add({
+      id: uid(),
+      brandId,
+      title: r.title,
+      body: r.body + ref,
+      kind,
+      createdAt: Date.now(),
+    });
+    toast("Saved as content idea");
   };
 
   return (
     <div className="space-y-4">
       <Card>
         <p className="mb-3 text-xs text-muted-foreground">
-          Results are AI-generated from general knowledge and your brand knowledge base — <strong>not real-time trends</strong>. Competitor
+          Results are AI-generated from general knowledge and your brand
+          knowledge base — <strong>not real-time trends</strong>. Competitor
           analysis uses only the text or public URL you provide.
         </p>
         <div className="grid gap-3 md:grid-cols-4">
           <Field label="Research type">
-            <Select value={kind} onChange={(e) => setKind(e.target.value as ResearchKind)}>
+            <Select
+              value={kind}
+              onChange={(e) => setKind(e.target.value as ResearchKind)}
+            >
               {Object.entries(RESEARCH_KINDS).map(([k, label]) => (
                 <option key={k} value={k}>
                   {label}
@@ -89,29 +167,50 @@ export function ResearchPage() {
           </Field>
           <div className="md:col-span-2">
             <Field label="Focus">
-              <Input value={focus} onChange={(e) => setFocus(e.target.value)} placeholder="mis. laundry kiloan multi-outlet" />
+              <Input
+                value={focus}
+                onChange={(e) => setFocus(e.target.value)}
+                placeholder="mis. laundry kiloan multi-outlet"
+              />
             </Field>
           </div>
           <Field label="Language">
-            <Select value={language} onChange={(e) => setLanguage(e.target.value as Language)}>
+            <Select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as Language)}
+            >
               <option value="id">Indonesia</option>
               <option value="en">English</option>
             </Select>
           </Field>
         </div>
-        {kind === 'competitor' && (
+        {kind === "competitor" && (
           <div className="mt-3 space-y-2">
             <div className="flex gap-2">
-              <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://public-competitor-page.example" />
-              <Button variant="outline" onClick={fetchUrl} disabled={!/^https?:\/\//.test(url)}>
+              <Input
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://public-competitor-page.example"
+              />
+              <Button
+                variant="outline"
+                onClick={fetchUrl}
+                disabled={!/^https?:\/\//.test(url)}
+              >
                 <Globe className="h-4 w-4" /> Fetch
               </Button>
             </div>
-            <Textarea rows={5} value={source} onChange={(e) => setSource(e.target.value)} placeholder="…or paste competitor posts here" />
+            <Textarea
+              rows={5}
+              value={source}
+              onChange={(e) => setSource(e.target.value)}
+              placeholder="…or paste competitor posts here"
+            />
           </div>
         )}
         <Button className="mt-3" onClick={run} disabled={loading}>
-          {loading && <Loader2 className="h-4 w-4 animate-spin" />} {loading ? 'Researching…' : 'Run research'}
+          {loading && <Loader2 className="h-4 w-4 animate-spin" />}{" "}
+          {loading ? "Researching…" : "Run research"}
         </Button>
       </Card>
 
@@ -125,7 +224,9 @@ export function ResearchPage() {
                   <BookmarkPlus className="h-3.5 w-3.5" /> Save idea
                 </Button>
               </div>
-              <p className="whitespace-pre-wrap text-sm text-muted-foreground">{r.body}</p>
+              <p className="whitespace-pre-wrap text-sm text-muted-foreground">
+                {r.body}
+              </p>
             </Card>
           ))}
         </div>
@@ -135,19 +236,72 @@ export function ResearchPage() {
         <CardTitle>
           Saved ideas <Badge>{ideas.length}</Badge>
         </CardTitle>
+        {ideas.length > 0 && (
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={allChecked}
+                onChange={() =>
+                  setSel(
+                    allChecked ? new Set() : new Set(ideas.map((i) => i.id)),
+                  )
+                }
+                aria-label="Select all ideas"
+              />
+              Select all ({sel.size})
+            </label>
+            <Select
+              value={qPlatform}
+              onChange={(e) => setQPlatform(e.target.value as Platform)}
+              aria-label="Queue platform"
+            >
+              <option value="threads">Threads</option>
+              <option value="facebook">Facebook Page</option>
+            </Select>
+            <Button
+              disabled={!sel.size || queuing !== null}
+              onClick={addToQueue}
+            >
+              {queuing !== null && <Loader2 className="h-4 w-4 animate-spin" />}
+              {queuing !== null
+                ? `Generating… ${queuing}/${sel.size}`
+                : `Add to queue (${sel.size})`}
+            </Button>
+          </div>
+        )}
         {ideas.length === 0 ? (
-          <Empty>No saved ideas yet. Autopilot also draws topics from saved ideas.</Empty>
+          <Empty>
+            No saved ideas yet. Autopilot also draws topics from saved ideas.
+          </Empty>
         ) : (
           <ul className="divide-y divide-border">
             {ideas.map((i) => (
-              <li key={i.id} className="flex items-start justify-between gap-2 py-2 text-sm">
-                <div>
+              <li
+                key={i.id}
+                className="flex items-start justify-between gap-2 py-2 text-sm"
+              >
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={sel.has(i.id)}
+                  onChange={() => toggle(i.id)}
+                  aria-label={`Select ${i.title}`}
+                />
+                <div className="flex-1">
                   <div className="font-medium">
                     {i.title} <Badge>{i.kind}</Badge>
                   </div>
-                  <div className="whitespace-pre-wrap text-muted-foreground">{i.body}</div>
+                  <div className="whitespace-pre-wrap text-muted-foreground">
+                    {i.body}
+                  </div>
                 </div>
-                <Button variant="ghost" size="icon" aria-label={`Delete ${i.title}`} onClick={() => db.ideas.delete(i.id)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Delete ${i.title}`}
+                  onClick={() => db.ideas.delete(i.id)}
+                >
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </li>
