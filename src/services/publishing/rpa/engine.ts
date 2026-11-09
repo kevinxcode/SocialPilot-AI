@@ -103,10 +103,18 @@ export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o:
 
   if (cfg.platform === 'facebook') {
     const pageName = normalizeText(input.pageName ?? '');
-    const author = normalizeText(dialog.textContent ?? '');
+    // The author may only appear as an avatar label/alt text, not as visible text.
+    const attrs = Array.from(dialog.querySelectorAll('[aria-label], img[alt], svg[aria-label], image'))
+      .map((el) => `${el.getAttribute('aria-label') ?? ''} ${el.getAttribute('alt') ?? ''}`)
+      .join(' ');
+    const author = normalizeText(`${dialog.textContent ?? ''} ${attrs}`);
     if (!pageName || !author.includes(pageName)) {
+      const seen = (dialog.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      return { status: 'failed', reason: `Composer is not posting as the Page "${input.pageName ?? ''}" — not posted.` };
+      return {
+        status: 'failed',
+        reason: `Composer is not posting as the Page "${input.pageName ?? ''}" — not posted. Composer shows: "${seen}". Switch Facebook to your Page (profile menu → the Page) or fix the Page name in Social Accounts.`,
+      };
     }
   }
 
