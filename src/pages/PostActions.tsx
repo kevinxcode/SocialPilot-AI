@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { formatInTimeZone } from 'date-fns-tz';
-import { CalendarClock, ImagePlus, Send } from 'lucide-react';
+import { CalendarClock, ImagePlus, Send, Upload } from 'lucide-react';
+import { useRef } from 'react';
+import { importFiles } from '@/services/media/importer';
 import { Badge, Button, Dialog, Field, Input, useToast } from '@/components/ui';
 import { useSettings } from '@/hooks/useSettings';
 import { db } from '@/services/storage/db';
@@ -25,6 +27,17 @@ export const toZonedInput = (ms: number, tz: string) => formatInTimeZone(ms, tz,
 
 export function MediaPicker({ value, onChange, max = 4 }: { value: string[]; onChange: (ids: string[]) => void; max?: number }) {
   const [open, setOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const upload = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setUploading(true);
+    const before = new Set((await db.media.toArray()).map((m) => m.id));
+    await importFiles(Array.from(files));
+    const added = (await db.media.orderBy('createdAt').toArray()).filter((m) => !before.has(m.id) && m.type.startsWith('image/'));
+    onChange([...value, ...added.map((m) => m.id)].slice(0, max));
+    setUploading(false);
+  };
   const media = useLiveQuery(() => db.media.orderBy('createdAt').reverse().toArray(), []) ?? [];
   const images = media.filter((m) => m.type.startsWith('image/'));
   return (
@@ -54,7 +67,11 @@ export function MediaPicker({ value, onChange, max = 4 }: { value: string[]; onC
             })}
           </div>
         )}
-        <div className="mt-3 flex justify-end">
+        <div className="mt-3 flex justify-between gap-2">
+          <Button variant="outline" disabled={uploading} onClick={() => fileRef.current?.click()}>
+            <Upload className="h-4 w-4" /> {uploading ? 'Uploading…' : 'Upload from computer'}
+          </Button>
+          <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => upload(e.target.files)} />
           <Button onClick={() => setOpen(false)}>Done</Button>
         </div>
       </Dialog>
