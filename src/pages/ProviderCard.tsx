@@ -14,6 +14,9 @@ export interface ProviderCardProps {
   onChange: (patch: Partial<ProviderConfig>) => void;
   onTest: () => Promise<TestResult>;
   onRefresh: () => Promise<void>;
+  /** global "never use paid models" (interactive + autopilot) */
+  freeOnly?: boolean;
+  onFreeOnly?: (v: boolean) => void;
 }
 
 export function modelOptionLabel(m: AIModel): string {
@@ -93,11 +96,18 @@ export function ProviderCard(p: ProviderCardProps) {
             />
           </Field>
         )}
+        {p.id !== 'ollama' && p.onFreeOnly && (
+          <label className="flex items-center gap-2 text-sm md:col-span-2">
+            <input type="checkbox" checked={!!p.freeOnly} onChange={(e) => p.onFreeOnly?.(e.target.checked)} aria-label="Free models only" />
+            <b>Free models only</b>
+            <span className="text-xs text-muted-foreground">— the list shows only free models and the router never calls a paid one (Studio and Autopilot).</span>
+          </label>
+        )}
         <Field label="Default model">
           <div className="flex gap-2">
             <Select value={p.cfg.model ?? ''} onChange={(e) => p.onChange({ model: e.target.value || undefined })}>
               <option value="">— select —</option>
-              {p.models.map((m) => (
+              {p.models.filter((m) => !p.freeOnly || m.providerId === 'ollama' || m.isFree).map((m) => (
                 <option key={m.id} value={m.id}>
                   {modelOptionLabel(m)}
                 </option>

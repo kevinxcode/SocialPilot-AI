@@ -125,6 +125,8 @@ export function AIProvidersPage() {
           status={statuses.find((s) => s.id === id)}
           models={models.filter((m) => m.providerId === id).sort((a, b) => a.name.localeCompare(b.name))}
           onChange={(patch) => setProvider(id, patch)}
+          freeOnly={!settings.router.allowPaid && !settings.autopilot.allowPaid}
+          onFreeOnly={(v) => update({ router: { allowPaid: !v }, autopilot: { allowPaid: v ? false : settings.autopilot.allowPaid } })}
           onTest={() => test(id)}
           onRefresh={async () => {
             if (id === 'ollama' && !(await ensureHostPermission(settings.providers.ollama.baseUrl))) throw new Error('Host permission denied');
