@@ -6,6 +6,7 @@
 import { db } from '@/services/storage/db';
 import type { MediaItem } from '@/types/models';
 import { driveToken } from './auth';
+import { quietly } from './quiet';
 
 type Fetch = typeof fetch;
 const FOLDER_KEY = 'driveFolderId';
@@ -77,6 +78,7 @@ export async function mediaBlob(m: MediaItem, f: Fetch = fetch): Promise<Blob | 
   if (m.blob) return m.blob;
   if (!m.driveFileId) return null;
   const blob = await downloadMedia(m.driveFileId, f);
-  await db.media.update(m.id, { blob }); // local cache (the blob itself is never sent to Firestore)
+  // Local cache only: a quiet write, so it is not treated as "the file was replaced" (no re-upload, no sync).
+  await quietly([db.media], () => db.media.update(m.id, { blob }));
   return blob;
 }

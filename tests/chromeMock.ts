@@ -11,7 +11,7 @@ export function installChromeMock(): void {
           return Object.fromEntries(ks.filter((k) => k in store).map((k) => [k, structuredClone(store[k])]));
         },
         set: async (items: Record<string, unknown>) => { Object.assign(store, structuredClone(items)); },
-        remove: async (k: string) => { delete store[k]; },
+        remove: async (k: string | string[]) => { for (const x of Array.isArray(k) ? k : [k]) delete store[x]; },
         clear: async () => { for (const k of Object.keys(store)) delete store[k]; },
       },
       onChanged: { addListener: () => {}, removeListener: () => {} },

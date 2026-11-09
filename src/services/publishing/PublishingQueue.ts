@@ -29,6 +29,8 @@ export interface QueueDeps {
   runSlot?: (item: QueueItem, now: number) => Promise<void>;
   /** Threads: choose a topic for a post that has none (AI); undefined = no topic */
   pickTopic?: (post: Post) => Promise<string | undefined>;
+  /** cloud: re-checks/renews the single-publisher lease right before each post; false = do not post */
+  canPublish?: () => Promise<boolean>;
 }
 
 export function zonedToUtc(local: string, timezone: string): Date {
@@ -317,6 +319,13 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     } else {
       await log('warn', 'topic', 'No topic chosen (AI unavailable and the topic list is empty)');
     }
+  }
+
+  // Cloud: renew the publishing lease right before posting; if another device took over, do not post.
+  if (deps.canPublish && !(await deps.canPublish())) {
+    await release(item.id, now + 5 * 60_000);
+    await log('info', 'queue', `${label(post.platform)}: another device is publishing now — skipped on this device`);
+    return;
   }
 
   const attempts = post.attempts + 1;

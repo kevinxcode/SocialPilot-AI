@@ -1,7 +1,7 @@
 import { open, seal, WrongPassphraseError } from '@/services/cloud/crypto';
 import { authUrl, parseRedirect, idToken } from '@/services/cloud/auth';
 import { setCloudConfig, setSession } from '@/services/cloud/config';
-import { changedSince, putRecord, setMeta } from '@/services/cloud/firestore';
+import { changedSince, putRecordIfNewer, setMeta } from '@/services/cloud/firestore';
 import { settingsForCloud, settingsFromCloud } from '@/services/cloud/sync';
 import { holdsPublisherLease, LEASE_MS } from '@/services/cloud/leader';
 import { mediaBlob } from '@/services/cloud/drive';
@@ -75,18 +75,41 @@ describe('Google sign-in', () => {
 });
 
 describe('Firestore REST', () => {
-  test('records are written under users/{uid} and read back by ts', async () => {
+  test('a record is written with compare-and-set + server time, and read back by server time', async () => {
+    await signedIn();
+    const f = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes(':runQuery'))
+        return resp(200, [{ document: { name: 'x', fields: { table: { stringValue: 'posts' }, id: { stringValue: 'p1' }, json: { stringValue: '{"id":"p1"}' }, ts: { integerValue: '5' }, deleted: { booleanValue: false }, serverTs: { timestampValue: '2026-11-10T03:00:00Z' } } } }]);
+      if (url.includes(':commit')) return resp(200, { writeResults: [{}] });
+      if (!init || init.method === 'GET') return resp(404, { error: { message: 'NOT_FOUND' } });
+      return resp(200, {});
+    });
+    expect(await putRecordIfNewer({ table: 'posts', id: 'p1', json: '{}', ts: 5, deleted: false }, f as never)).toEqual({ result: 'written' });
+    const commit = f.mock.calls.find((c) => String(c[0]).includes(':commit')) as unknown as [string, RequestInit];
+    const body = JSON.parse(String(commit[1].body));
+    expect(body.writes[0].currentDocument).toEqual({ exists: false });
+    expect(body.writes[0].updateTransforms).toEqual([{ fieldPath: 'serverTs', setToServerValue: 'REQUEST_TIME' }]);
+    expect(body.writes[0].update.name).toMatch(/users\/u1\/records\/posts__cDE$/);
+    expect((commit[1].headers as Record<string, string>).Authorization).toBe('Bearer ID');
+    expect(await changedSince('', 300, f as never)).toEqual([{ table: 'posts', id: 'p1', json: '{"id":"p1"}', ts: 5, deleted: false, serverTs: '2026-11-10T03:00:00Z' }]);
+  });
+
+  test('an older edit never overwrites a newer cloud copy', async () => {
     await signedIn();
     const f = vi.fn(async (url: string) =>
-      url.includes(':runQuery')
-        ? resp(200, [{ document: { name: 'x', fields: { table: { stringValue: 'posts' }, id: { stringValue: 'p1' }, json: { stringValue: '{"id":"p1"}' }, ts: { integerValue: '5' }, deleted: { booleanValue: false } } } }])
-        : resp(200, {}),
+      url.includes(':commit')
+        ? resp(200, {})
+        : resp(200, { name: 'x', updateTime: 'U1', fields: { table: { stringValue: 'posts' }, id: { stringValue: 'p1' }, json: { stringValue: '{"status":"published"}' }, ts: { integerValue: '10' }, deleted: { booleanValue: false } } }),
     );
-    await putRecord({ table: 'posts', id: 'p1', json: '{}', ts: 5, deleted: false }, f as never);
-    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe('https://firestore.googleapis.com/v1/projects/sp-test/databases/(default)/documents/users/u1/records/posts__p1');
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer ID');
-    expect(await changedSince(0, 300, f as never)).toEqual([{ table: 'posts', id: 'p1', json: '{"id":"p1"}', ts: 5, deleted: false }]);
+    const r = await putRecordIfNewer({ table: 'posts', id: 'p1', json: '{"status":"scheduled"}', ts: 5, deleted: false }, f as never);
+    expect(r.result).toBe('remote-newer');
+    expect(f.mock.calls.some((c) => String(c[0]).includes(':commit'))).toBe(false);
+  });
+
+  test('a 404 on a write is an error, never a silent success', async () => {
+    await signedIn();
+    const f = vi.fn(async () => resp(404, { error: { message: 'database not found' } }));
+    await expect(setMeta('x', {}, undefined, f as never)).rejects.toThrow(/404/);
   });
 
   test('compare-and-set: a failed precondition returns false', async () => {
@@ -98,8 +121,10 @@ describe('Firestore REST', () => {
 });
 
 describe('one publishing device', () => {
-  const api = (lease: { deviceId: string; until: number } | null, setOk = true) => ({
-    get: vi.fn(async () => (lease ? { value: { ...lease, label: 'x' }, updateTime: 'T1' } : null)) as never,
+  const api = (lease: { deviceId: string; until: number } | null, setOk = true, handover: { to: string; at: number } | null = null) => ({
+    get: vi.fn(async (name: string) =>
+      name === 'publisher' ? (lease ? { value: { ...lease, label: 'x' }, updateTime: 'T1' } : null) : handover ? { value: handover, updateTime: 'H' } : null,
+    ) as never,
     set: vi.fn(async () => setOk) as never,
   });
 
@@ -136,4 +161,37 @@ test('a media file that only exists in Drive is downloaded once and cached', asy
   expect(await b!.text()).toBe('png');
   expect(String((f.mock.calls[0] as unknown[])[0])).toBe('https://www.googleapis.com/drive/v3/files/F1?alt=media');
   expect((await db.media.get('m1'))?.blob).toBeDefined();
+});
+
+describe('handover between devices', () => {
+  const make = (state: { lease: { deviceId: string; until: number; label: string } | null; handover: { to: string; at: number } | null }) => ({
+    get: vi.fn(async (name: string) => {
+      const v = name === 'publisher' ? state.lease : state.handover;
+      return v ? { value: v, updateTime: 'T' } : null;
+    }) as never,
+    set: vi.fn(async (name: string, value: never) => {
+      if (name === 'publisher') state.lease = value;
+      else state.handover = value;
+      return true;
+    }) as never,
+  });
+
+  test('the publisher releases the lease when another device asks, and stops publishing', async () => {
+    await signedIn();
+    const { deviceId } = await import('@/services/cloud/config');
+    const me = await deviceId();
+    const state = { lease: { deviceId: me, until: NOW + 60_000, label: 'me' }, handover: { to: 'laptop-2', at: NOW - 1000 } };
+    expect(await holdsPublisherLease(NOW, make(state))).toBe(false);
+    expect(state.lease.until).toBe(0); // released → laptop-2 can take it at once
+  });
+
+  test('takeOver is immediate when free, only a request while another device holds the lease', async () => {
+    await signedIn();
+    const { takeOver } = await import('@/services/cloud/leader');
+    const busy = { lease: { deviceId: 'other', until: NOW + 60_000, label: 'o' }, handover: null };
+    expect(await takeOver(NOW, make(busy))).toBe('requested');
+    expect(busy.lease.deviceId).toBe('other'); // never snatched in the middle of a post
+    const free = { lease: null, handover: null };
+    expect(await takeOver(NOW, make(free))).toBe('now');
+  });
 });

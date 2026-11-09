@@ -55,6 +55,7 @@ export const deps: QueueDeps = {
   loadMedia,
   runSlot: (item, now) => autopilotHooks.runSlot(item, now, { notify }),
   pickTopic: async (post) => ((await getSettings()).autoTopic ? topicForPost(post, aiRouter) : undefined),
+  canPublish: () => holdsPublisherLease(),
 };
 
 /** Keeps the worker alive while a long RPA run is in progress. */

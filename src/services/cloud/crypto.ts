@@ -49,6 +49,7 @@ export async function getPassphrase(): Promise<string | null> {
   return ((await chrome.storage.local.get(PASS_KEY))[PASS_KEY] as string | undefined) ?? null;
 }
 export async function setPassphrase(p: string | null): Promise<void> {
+  if (p !== null && p.length < 8) throw new Error('Passphrase must be at least 8 characters');
   if (p) await chrome.storage.local.set({ [PASS_KEY]: p });
   else await chrome.storage.local.remove(PASS_KEY);
 }

@@ -3,9 +3,10 @@ import { CheckCircle2, Cloud, Copy, Loader2, LogIn, LogOut, RefreshCw, ShieldChe
 import { Badge, Button, Card, CardTitle, Field, Input, useToast } from '@/components/ui';
 import { sendToSw } from '@/background/messages';
 import { getCloudConfig, getSession, setCloudConfig, type CloudConfig, type CloudSession } from '@/services/cloud/config';
-import { signIn, signOut } from '@/services/cloud/auth';
+import { signOut } from '@/services/cloud/auth';
+import { loginWithGoogle } from '@/services/cloud/login';
 import { getPassphrase, setPassphrase } from '@/services/cloud/crypto';
-import { markAllDirty, resealSettings, resetPull, SYNC_STATUS_KEY } from '@/services/cloud/sync';
+import { resealSettings, resetPull, SYNC_STATUS_KEY } from '@/services/cloud/sync';
 import { currentLease, takeOver, type Lease } from '@/services/cloud/leader';
 import { deviceId } from '@/services/cloud/config';
 
@@ -68,10 +69,7 @@ export function CloudPage() {
 
   const login = () =>
     run('login', async () => {
-      await signIn();
-      await markAllDirty(); // upload what this device already has
-      await resetPull(); // and receive everything from the cloud
-      await sendToSw({ type: 'tick' });
+      if ((await loginWithGoogle((m) => confirm(m))) === 'cancelled') throw new Error('Sign-in cancelled — nothing was changed');
     }, 'Signed in — syncing now');
 
   const savePass = () =>
@@ -132,12 +130,12 @@ export function CloudPage() {
         <Card>
           <CardTitle className="mb-1">Publishing device</CardTitle>
           <p className="mb-3 text-sm text-muted-foreground">
-            Only one browser posts at a time, so nothing is ever posted twice. If it is offline for 10 minutes another device takes over.
+            Only one browser posts at a time, so nothing is ever posted twice. If it is offline for 15 minutes another device takes over. While the cloud is unreachable for that long, a signed-in browser pauses publishing (safety: it cannot be sure no other device is posting).
           </p>
           <div className="flex flex-wrap items-center gap-3 text-sm">
             {isMain ? <Badge tone="success">This browser is publishing</Badge> : <Badge>{lease ? `Publishing on another device (${lease.label.slice(0, 40)}…)` : 'No publishing device yet'}</Badge>}
             {!isMain && (
-              <Button size="sm" variant="outline" disabled={!!busy} onClick={() => run('lead', () => takeOver(), 'This browser now publishes')}>
+              <Button size="sm" variant="outline" disabled={!!busy} onClick={() => run('lead', async () => toast((await takeOver()) === 'now' ? 'This browser now publishes' : 'Requested — the other device hands over between posts (a few minutes)'))}>
                 Publish from this browser
               </Button>
             )}
