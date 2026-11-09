@@ -26,9 +26,16 @@ const CONFIG_KEY = 'cloudConfig';
 const SESSION_KEY = 'cloudSession';
 const DEVICE_KEY = 'cloudDeviceId';
 
+/** Config baked in at build time from .env.local (VITE_FIREBASE_*), so users only see "Login with Google". */
+export function builtInConfig(env: Record<string, string | undefined> = import.meta.env): CloudConfig | null {
+  const c = { apiKey: env.VITE_FIREBASE_API_KEY ?? '', projectId: env.VITE_FIREBASE_PROJECT_ID ?? '', clientId: env.VITE_GOOGLE_OAUTH_CLIENT_ID ?? '' };
+  return c.apiKey && c.projectId && c.clientId ? c : null;
+}
+
+/** Values entered by hand on this device win; otherwise the built-in project is used. */
 export async function getCloudConfig(): Promise<CloudConfig | null> {
   const c = (await chrome.storage.local.get(CONFIG_KEY))[CONFIG_KEY] as CloudConfig | undefined;
-  return c?.apiKey && c.projectId && c.clientId ? c : null;
+  return c?.apiKey && c.projectId && c.clientId ? c : builtInConfig();
 }
 
 export async function setCloudConfig(c: CloudConfig): Promise<void> {

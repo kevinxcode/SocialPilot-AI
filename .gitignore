@@ -2,3 +2,5 @@
 node_modules/
 dist/
 *.pem
+.env.local
+.env.*.local

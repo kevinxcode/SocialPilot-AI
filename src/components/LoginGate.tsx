@@ -77,7 +77,7 @@ export function LoginGate({ children, mode }: { children: ReactNode; mode: 'dash
         <div className="text-center">
           <Sparkles className="mx-auto mb-2 h-9 w-9 text-primary" />
           <h1 className="text-xl font-semibold">SocialPilot AI</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Sign in with your Google account to use SocialPilot on every browser and laptop.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Sign in with your Google account. Use the same email on any computer or browser and your data is there too.</p>
         </div>
         <Button className="w-full" disabled={busy || !st.configured} onClick={login}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />} Login with Google

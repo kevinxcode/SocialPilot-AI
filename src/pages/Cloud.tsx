@@ -8,7 +8,7 @@ import { loginWithGoogle } from '@/services/cloud/login';
 import { getPassphrase, setPassphrase } from '@/services/cloud/crypto';
 import { resealSettings, resetPull, SYNC_STATUS_KEY } from '@/services/cloud/sync';
 import { currentLease, takeOver, type Lease } from '@/services/cloud/leader';
-import { deviceId } from '@/services/cloud/config';
+import { builtInConfig, deviceId } from '@/services/cloud/config';
 
 type Status = { at: number; ok: boolean; pushed?: number; pulled?: number; error?: string } | undefined;
 
@@ -162,6 +162,7 @@ export function CloudPage() {
         </div>
       </Card>
 
+      {!builtInConfig() && (
       <Card>
         <CardTitle className="mb-1">Firebase project</CardTitle>
         <p className="mb-3 text-sm text-muted-foreground">One-time setup — follow docs/SETUP-CLOUD.md. These values stay on this device.</p>
@@ -188,6 +189,7 @@ export function CloudPage() {
           </Button>
         </div>
       </Card>
+      )}
     </div>
   );
 }

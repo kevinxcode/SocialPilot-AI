@@ -15,6 +15,16 @@ const show = (mode: 'dashboard' | 'popup' = 'dashboard') =>
 beforeEach(async () => {
   await chrome.storage.local.clear();
 });
+afterEach(() => vi.unstubAllEnvs());
+
+test('built-in project (from the build) → only the Login with Google button, no setup fields', async () => {
+  vi.stubEnv('VITE_FIREBASE_API_KEY', 'AIzaX');
+  vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'p');
+  vi.stubEnv('VITE_GOOGLE_OAUTH_CLIENT_ID', 'c.apps.googleusercontent.com');
+  show();
+  expect(await screen.findByRole('button', { name: /login with google/i })).toBeTruthy();
+  expect(screen.queryByText(/web api key/i)).toBeNull();
+});
 
 test('not signed in → the app is hidden behind "Login with Google"', async () => {
   await chrome.storage.local.set({ cloudConfig: CFG });
@@ -31,6 +41,7 @@ test('signed in → the app is shown', async () => {
 });
 
 test('cloud not set up yet → setup fields + a temporary offline way in', async () => {
+  vi.stubEnv('VITE_FIREBASE_API_KEY', '');
   show();
   expect(await screen.findByText(/continue offline/i)).toBeTruthy();
   expect((screen.getByRole('button', { name: /login with google/i }) as HTMLButtonElement).disabled).toBe(true);
