@@ -200,3 +200,17 @@ describe('autopilot — groups', () => {
     expect(prompt).toMatch(/Tanpa promosi/);
   });
 });
+
+test('collectGroups reads joined groups and skips nav links', async () => {
+  const { collectGroups } = await import('@/services/publishing/rpa/engine');
+  document.body.innerHTML = `
+    <a href="/groups/feed/">Feed</a><a href="/groups/discover/">Discover</a>
+    <a href="https://www.facebook.com/groups/pengusahalaundry/"><img/></a>
+    <a href="https://www.facebook.com/groups/pengusahalaundry/">Pengusaha Laundry Indonesia</a>
+    <a href="/groups/123456/">Lihat grup</a><a href="/groups/123456/">UMKM Kaltim</a>
+    <a href="/groups/123456/posts/9/">a post</a>`;
+  expect(collectGroups()).toEqual([
+    { name: 'Pengusaha Laundry Indonesia', url: 'https://www.facebook.com/groups/pengusahalaundry' },
+    { name: 'UMKM Kaltim', url: 'https://www.facebook.com/groups/123456' },
+  ]);
+});

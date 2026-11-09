@@ -287,3 +287,40 @@ export async function runScrapeFeed(cfg: PlatformSelectors, max: number, o: Engi
   }
   return { posts: posts.sort((x, y) => y.engagement - x.engagement) };
 }
+
+const NOT_GROUP = new Set(['joins', 'feed', 'discover', 'create', 'search', 'notifications', 'your_groups', 'category', 'groups']);
+
+/** Collects joined groups from facebook.com/groups/joins (read-only). */
+export function collectGroups(root: ParentNode = document): { name: string; url: string }[] {
+  const byId = new Map<string, string>();
+  for (const a of Array.from(root.querySelectorAll<HTMLAnchorElement>('a[href*="/groups/"]'))) {
+    let u: URL;
+    try {
+      u = new URL(a.getAttribute('href')!, 'https://www.facebook.com');
+    } catch {
+      continue;
+    }
+    const m = u.pathname.match(/^\/groups\/([^/]+)\/?$/);
+    if (!m || NOT_GROUP.has(m[1])) continue;
+    const name = (a.textContent ?? '').replace(/\s+/g, ' ').trim();
+    if (!name || /^(lihat grup|view group|kunjungi|visit)/i.test(name)) {
+      if (!byId.has(m[1])) byId.set(m[1], '');
+      continue;
+    }
+    if ((byId.get(m[1]) ?? '').length < name.length && name.length < 120) byId.set(m[1], name);
+  }
+  return [...byId].filter(([, n]) => n).map(([id, name]) => ({ name, url: `https://www.facebook.com/groups/${id}` }));
+}
+
+export async function runScrapeGroups(o: EngineOpts = {}): Promise<{ groups: { name: string; url: string }[] }> {
+  await waitFor(() => document.querySelector('a[href*="/groups/"]'), T(o, 15_000), o.pollMs);
+  let last = -1;
+  for (let i = 0; i < 15; i++) {
+    const n = collectGroups().length;
+    if (n === last) break;
+    last = n;
+    window.scrollBy(0, 3000);
+    await new Promise((r) => setTimeout(r, o.pollMs ?? 1500));
+  }
+  return { groups: collectGroups() };
+}

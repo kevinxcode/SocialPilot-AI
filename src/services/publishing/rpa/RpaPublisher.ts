@@ -162,6 +162,19 @@ export function scrapeThreadsSearch(queries: string[], perQuery = 8, driver: Dri
   });
 }
 
+/** Reads the list of Facebook groups the logged-in user has joined (read-only). */
+export function scrapeJoinedGroups(driver: Driver = TabDriver as unknown as Driver): Promise<{ name: string; url: string }[]> {
+  return exclusive(async () => {
+    try {
+      const tabId = await driver.open('https://www.facebook.com/groups/joins/?nav_source=tab');
+      const r = await driver.send<{ groups: { name: string; url: string }[] }>(tabId, { cmd: 'scrapeGroups', platform: 'fbgroup' }, 120_000);
+      return r.groups ?? [];
+    } finally {
+      await driver.close();
+    }
+  });
+}
+
 export const publishers: Record<Platform, Publisher> = {
   threads: new RpaPublisher('threads'),
   facebook: new RpaPublisher('facebook'),

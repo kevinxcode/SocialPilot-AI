@@ -26,6 +26,12 @@ export function GroupsCard() {
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<Record<string, { ok: boolean; message?: string }>>({});
 
+  const [scan, setScan] = useState<{ busy?: boolean; msg?: string; ok?: boolean }>({});
+  const scanGroups = async () => {
+    setScan({ busy: true });
+    const r = await sendToSw({ type: 'scanGroups' });
+    setScan({ msg: r.message, ok: r.ok });
+  };
   const add = async () => {
     const err = validateGroupUrl(url.trim());
     if (err) return toast(err, 'err');
@@ -53,6 +59,13 @@ export function GroupsCard() {
         joined the group). Max 1 post per group per 24 h, {`≥`}30 min between groups, and the same text is never sent to two groups. Many
         groups require admin approval — those posts are marked “pending”.
       </p>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Button variant="outline" disabled={scan.busy} onClick={scanGroups}>
+          {scan.busy && <Loader2 className="h-4 w-4 animate-spin" />} Find my joined groups
+        </Button>
+        <span className="text-xs text-muted-foreground">Reads facebook.com/groups/joins in a background tab and saves the list (disabled until you switch a group on).</span>
+        {scan.msg && <p className={`w-full text-xs ${scan.ok ? 'text-emerald-600' : 'text-red-500'}`}>{scan.msg}</p>}
+      </div>
       <div className="grid gap-2 md:grid-cols-[1fr_1.4fr]">
         <Field label="Group name">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Pengusaha Laundry Indonesia" />

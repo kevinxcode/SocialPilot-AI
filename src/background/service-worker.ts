@@ -1,6 +1,7 @@
+import { uid } from '@/lib/utils';
 import { formatInTimeZone } from 'date-fns-tz';
 import { maybeDailyTrending, researchTrending } from '@/services/content/trending';
-import { scrapeThreadsSearch } from '@/services/publishing/rpa/RpaPublisher';
+import { scrapeJoinedGroups, scrapeThreadsSearch } from '@/services/publishing/rpa/RpaPublisher';
 /**
  * Service worker: owns alarms, the publishing queue, autopilot planning and RPA publishers.
  */
@@ -173,6 +174,19 @@ async function handle(msg: SwRequest): Promise<SwResponse> {
       await schedulePost(msg.postId, new Date(), { immediate: true });
       void tick();
       return { ok: true, message: 'Publishing started — you will get a notification' };
+    }
+    case 'scanGroups': {
+      try {
+        const found = await scrapeJoinedGroups();
+        if (!found.length) return { ok: false, message: 'No groups found — are you logged in to Facebook and a member of any group?' };
+        const existing = new Set((await db.groups.toArray()).map((g) => g.url.replace(/\/$/, '').toLowerCase()));
+        const fresh = found.filter((g) => !existing.has(g.url.toLowerCase()));
+        // Saved disabled: nothing is posted to a group until you switch it on.
+        await db.groups.bulkAdd(fresh.map((g) => ({ id: uid(), name: g.name, url: g.url, rules: '', enabled: false })));
+        return { ok: true, message: `Found ${found.length} joined groups, ${fresh.length} new saved (disabled — switch on the ones to post in).` };
+      } catch (e) {
+        return { ok: false, message: (e as Error).message };
+      }
     }
     case 'researchTrending': {
       const s = await getSettings();

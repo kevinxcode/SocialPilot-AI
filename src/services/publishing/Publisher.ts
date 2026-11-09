@@ -21,4 +21,5 @@ export type RpaCommand =
   | { cmd: 'preflight'; platform: Platform; account: { profileUrl: string; pageName?: string } }
   | { cmd: 'publish'; platform: Platform; input: { text: string; files: { name: string; type: string; dataUrl: string }[]; dryRun: boolean; pageName?: string; topic?: string } }
   | { cmd: 'findExisting'; platform: Platform; fingerprint: string }
-  | { cmd: 'scrapeFeed'; platform: Platform; max: number };
+  | { cmd: 'scrapeFeed'; platform: Platform; max: number }
+  | { cmd: 'scrapeGroups'; platform: Platform };

@@ -8,6 +8,7 @@ export type SwRequest =
   | { type: 'publishNow'; postId: string }
   | { type: 'tick' }
   | { type: 'researchTrending' }
+  | { type: 'scanGroups' }
   | { type: 'replanAutopilot' }
   | { type: 'reviewDecision'; postId: string; approve: boolean };
 
