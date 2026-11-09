@@ -109,7 +109,34 @@ export function MediaLibraryPage() {
             hidden
             onChange={(e) => e.target.files && doImport(Array.from(e.target.files))}
           />
-          <span className="text-xs text-muted-foreground">
+          <div className="ml-auto flex gap-2">
+            {filtered.length > 0 && filtered.length < media.length && (
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  if (!confirm(`Delete the ${filtered.length} items shown by the current filter?`)) return;
+                  await db.media.bulkDelete(filtered.map((m) => m.id));
+                  toast(`Deleted ${filtered.length} items`);
+                }}
+              >
+                <Trash2 className="h-4 w-4" /> Delete shown ({filtered.length})
+              </Button>
+            )}
+            {media.length > 0 && (
+              <Button
+                variant="outline"
+                className="text-red-500"
+                onClick={async () => {
+                  if (!confirm(`Remove ALL ${media.length} items from the media library? Files on your computer are not touched.`)) return;
+                  await db.media.clear();
+                  toast('Media library cleared');
+                }}
+              >
+                <Trash2 className="h-4 w-4" /> Clear all
+              </Button>
+            )}
+          </div>
+          <span className="w-full text-xs text-muted-foreground">
             or drag & drop files/folders here. Suggested folder: <code>{SUGGESTED_FOLDER}</code>
           </span>
         </div>

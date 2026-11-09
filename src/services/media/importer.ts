@@ -61,6 +61,12 @@ export interface ImportResult {
   duplicates: number;
 }
 
+/** Windows maps .ts (TypeScript) to video/mp2t, so check the extension too. */
+const MEDIA_EXT = /\.(png|jpe?g|webp|gif|avif|bmp|mp4|mov|webm|m4v)$/i;
+export function isMediaFile(f: { name: string; type: string }): boolean {
+  return /^(image|video)\//.test(f.type) && MEDIA_EXT.test(f.name);
+}
+
 /** Imports images/videos from picked files or a directory handle. Dedupe by name + size. */
 export async function importFiles(
   input: File[] | FileSystemDirectoryHandle,
@@ -72,7 +78,7 @@ export async function importFiles(
   const existing = new Set((await db.media.toArray()).map((m) => `${m.name}|${m.size}`));
   const r: ImportResult = { added: 0, skipped: 0, duplicates: 0 };
   for await (const { file, path } of entries) {
-    if (!/^(image|video)\//.test(file.type)) {
+    if (!isMediaFile(file)) {
       r.skipped++;
       continue;
     }
