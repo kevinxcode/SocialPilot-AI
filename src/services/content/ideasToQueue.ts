@@ -91,3 +91,51 @@ export async function queueIdeas(
   await log('info', 'research', `Queued ${queued} posts from ideas${failed.length ? `, ${failed.length} failed` : ''}`);
   return { queued, failed, queuedIds };
 }
+
+export const IDEA_JOB_KEY = 'ideaQueueJob';
+export interface IdeaJob {
+  running: boolean;
+  total: number;
+  done: number;
+  queued: number;
+  failed: string[];
+  removed: number;
+  startedAt: number;
+  finishedAt?: number;
+}
+
+/** Runs in the service worker so it survives page navigation; progress lives in chrome.storage.local. */
+export async function runIdeaJob(ids: string[], platforms: Platform[], removeAfter: boolean, router?: RouterLike): Promise<IdeaJob> {
+  const job: IdeaJob = { running: true, total: ids.length * platforms.length, done: 0, queued: 0, failed: [], removed: 0, startedAt: Date.now() };
+  const save = () => chrome.storage.local.set({ [IDEA_JOB_KEY]: { ...job } });
+  await save();
+  const ok = new Set<string>();
+  for (const platform of platforms) {
+    const base = job.done;
+    try {
+      const r = await queueIdeas(ids, {
+        platform,
+        router,
+        onProgress: (n) => {
+          job.done = base + n;
+          void save();
+        },
+      });
+      job.queued += r.queued;
+      job.failed.push(...r.failed.map((f) => `${platform}: ${f}`));
+      r.queuedIds.forEach((x) => ok.add(x));
+    } catch (e) {
+      job.failed.push(`${platform}: ${(e as Error).message}`);
+    }
+    job.done = base + ids.length;
+    await save();
+  }
+  if (removeAfter && ok.size) {
+    await db.ideas.bulkDelete([...ok]);
+    job.removed = ok.size;
+  }
+  job.running = false;
+  job.finishedAt = Date.now();
+  await save();
+  return job;
+}

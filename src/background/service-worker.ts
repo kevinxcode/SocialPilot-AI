@@ -1,3 +1,4 @@
+import { IDEA_JOB_KEY, runIdeaJob, type IdeaJob } from '@/services/content/ideasToQueue';
 import { cleanGroupName } from '@/services/publishing/rpa/engine';
 import { automaticComments } from '@/services/autopilot/comments';
 import { uid } from '@/lib/utils';
@@ -179,6 +180,16 @@ async function handle(msg: SwRequest): Promise<SwResponse> {
       await schedulePost(msg.postId, new Date(), { immediate: true });
       void tick();
       return { ok: true, message: 'Publishing started — you will get a notification' };
+    }
+    case 'queueIdeas': {
+      const cur = (await chrome.storage.local.get(IDEA_JOB_KEY))[IDEA_JOB_KEY] as IdeaJob | undefined;
+      if (cur?.running && Date.now() - cur.startedAt < 60 * 60_000) return { ok: false, message: 'A queue job is already running' };
+      const stop = keepAlive();
+      void runIdeaJob(msg.ids, msg.platforms, msg.removeAfter, aiRouter)
+        .then((j) => notify('Ideas queued', `Scheduled ${j.queued} posts${j.failed.length ? `, ${j.failed.length} failed` : ''}`))
+        .catch((e: Error) => log('error', 'research', e.message))
+        .finally(stop);
+      return { ok: true, message: 'Started in the background' };
     }
     case 'scanGroups': {
       try {

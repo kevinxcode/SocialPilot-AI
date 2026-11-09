@@ -20,7 +20,8 @@ import { RESEARCH_KINDS, type ResearchKind } from "@/services/content/prompts";
 import { uid } from "@/lib/utils";
 import type { Language } from "@/types/models";
 import { getActiveBrandId } from "./BrandKnowledge";
-import { queueIdeas } from "@/services/content/ideasToQueue";
+import { IDEA_JOB_KEY, type IdeaJob } from "@/services/content/ideasToQueue";
+import { sendToSw } from "@/background/messages";
 import type { Platform } from "@/types/models";
 
 export function htmlToText(html: string): string {
@@ -80,32 +81,25 @@ export function ResearchPage() {
       )
     )
       return;
-    setQueuing(0);
-    try {
-      let queued = 0;
-      const failed: string[] = [];
-      const done = new Set<string>();
-      for (const platform of platforms) {
-        try {
-          const r = await queueIdeas(ids, { platform, onProgress: (n) => setQueuing(queued + n) });
-          queued += r.queued;
-          failed.push(...r.failed.map((f) => `${platform}: ${f}`));
-          r.queuedIds.forEach((x) => done.add(x));
-        } catch (e) {
-          failed.push(`${platform}: ${(e as Error).message}`);
-        }
-      }
-      // Processed ideas leave the list; failed ones stay so you can retry.
-      if (removeAfter && done.size) await db.ideas.bulkDelete([...done]);
-      toast(
-        `Scheduled ${queued} posts${removeAfter && done.size ? ` · ${done.size} ideas removed` : ""}${failed.length ? ` · ${failed.length} failed: ${failed[0]}` : ""}`,
-        failed.length && !queued ? "err" : undefined,
-      );
-      setSel(new Set());
-    } finally {
-      setQueuing(null);
-    }
+    const r = await sendToSw({ type: "queueIdeas", ids, platforms, removeAfter });
+    if (!r.ok) return toast(r.message ?? "Could not start", "err");
+    toast("Running in the background — you can switch menus");
+    setSel(new Set());
   };
+
+  // Background job progress (survives navigation).
+  const [job, setJob] = useState<IdeaJob | null>(null);
+  useEffect(() => {
+    chrome.storage.local.get(IDEA_JOB_KEY).then((v) => setJob((v[IDEA_JOB_KEY] as IdeaJob) ?? null));
+    const on = (ch: Record<string, chrome.storage.StorageChange>) => {
+      if (ch[IDEA_JOB_KEY]) setJob(ch[IDEA_JOB_KEY].newValue as IdeaJob);
+    };
+    chrome.storage.onChanged.addListener(on);
+    return () => chrome.storage.onChanged.removeListener(on);
+  }, []);
+  useEffect(() => {
+    setQueuing(job?.running ? job.done : null);
+  }, [job]);
 
   useEffect(() => {
     getActiveBrandId(settings?.activeBrandId).then(
@@ -320,10 +314,16 @@ Source: ${url}` : "";
             >
               {queuing !== null && <Loader2 className="h-4 w-4 animate-spin" />}
               {queuing !== null
-                ? `Generating… ${queuing}/${sel.size * qPlatforms.size}`
+                ? `Generating… ${queuing}/${job?.total ?? 0}`
                 : `Add to queue (${sel.size * qPlatforms.size})`}
             </Button>
           </div>
+        )}
+        {job && !job.running && job.finishedAt && Date.now() - job.finishedAt < 30 * 60_000 && (
+          <p className={`mb-2 text-xs ${job.failed.length && !job.queued ? "text-red-500" : "text-emerald-600"}`}>
+            Last run: scheduled {job.queued}/{job.total} posts{job.removed ? ` · ${job.removed} ideas removed` : ""}
+            {job.failed.length ? ` · ${job.failed.length} failed (${job.failed[0]})` : ""}
+          </p>
         )}
         {ideas.length === 0 ? (
           <Empty>
