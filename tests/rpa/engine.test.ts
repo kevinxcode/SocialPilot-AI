@@ -139,3 +139,20 @@ test('findExisting on Facebook page feed', async () => {
   const r = await runFindExisting(FACEBOOK, fingerprint('Tips hari ini: pisahkan cucian per pelanggan 🧺 Coba CuciQu Pro!'), FAST);
   expect(r).toEqual({ found: true, url: 'https://www.facebook.com/cuciqupro/posts/pfbid02abcDEF' });
 });
+
+test('composer already open (Threads intent URL) → no opener needed, text typed and posted', async () => {
+  load(fx('threads/composer.html'), 'https://www.threads.com/intent/post');
+  const onPost = vi.fn();
+  const handler = (e: Event) => {
+    const el = (e.target as HTMLElement).closest('[role="button"]');
+    if (el && /^(Posting|Post)$/.test((el.textContent ?? '').trim())) {
+      onPost();
+      document.querySelector('[role="dialog"]')?.remove();
+    }
+  };
+  document.addEventListener('click', handler, { capture: true });
+  cleanups.push(() => document.removeEventListener('click', handler, { capture: true }));
+  const r = await runPublish(THREADS, { text: 'via intent', files: [], dryRun: false }, FAST);
+  expect(r).toEqual({ status: 'clicked' });
+  expect(onPost).toHaveBeenCalledTimes(1);
+});

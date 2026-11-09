@@ -63,8 +63,14 @@ export class RpaPublisher implements Publisher {
       let commandSent = false;
       try {
         const acc = await this.account();
-        const { tabId, res } = await this.preflightOn(acc);
+        const pre = await this.preflightOn(acc);
+        let tabId = pre.tabId;
+        const res = pre.res;
         if (!res.ok) return { status: 'failed', reason: res.reason ?? 'Preflight failed' };
+        if (this.platform === 'threads') {
+          // Official compose intent: opens the composer directly, independent of where the "create" button sits.
+          tabId = await this.driver.open(new URL('/intent/post', acc.profileUrl).toString());
+        }
         const files = await Promise.all(
           media.map(async (b, i) => ({ name: `media-${i + 1}.${(b.type.split('/')[1] ?? 'bin').replace('jpeg', 'jpg')}`, type: b.type, dataUrl: await blobToDataUrl(b) })),
         );

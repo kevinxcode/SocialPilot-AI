@@ -68,10 +68,16 @@ export async function runPreflight(
 
 export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o: EngineOpts = {}): Promise<EngineResult> {
   const d = o.delay !== false;
-  const opener = await waitFor(() => findBySelectors(cfg.composerOpen), T(o, 15_000), o.pollMs);
-  if (!opener) return { status: 'failed', reason: 'Could not find the "create post" button (UI changed or not logged in)' };
-  await humanDelay(d);
-  click(opener);
+  // The composer may already be open (Threads compose intent URL); otherwise click the opener.
+  const preOpened = /^\/intent\//.test(location.pathname)
+    ? await waitFor(() => findBySelectors(cfg.composerDialog), T(o, 15_000), o.pollMs)
+    : findBySelectors(cfg.composerDialog);
+  if (!preOpened) {
+    const opener = await waitFor(() => findBySelectors(cfg.composerOpen), T(o, 15_000), o.pollMs);
+    if (!opener) return { status: 'failed', reason: 'Could not find the "create post" button (UI changed or not logged in)' };
+    await humanDelay(d);
+    click(opener);
+  }
 
   const dialog = await waitFor(() => findBySelectors(cfg.composerDialog), T(o, 15_000), o.pollMs);
   const box = dialog && (await waitFor(() => findBySelectors(cfg.textbox, dialog), T(o, 10_000), o.pollMs));

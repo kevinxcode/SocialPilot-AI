@@ -72,3 +72,10 @@ test('dry run leaves the window open', async () => {
   expect(await new RpaPublisher('threads', f.d, 0).publish(post, [], { dryRun: true })).toEqual({ status: 'dry-run' });
   expect(f.closed()).toBe(0);
 });
+
+test('Threads publish opens the official compose intent URL after preflight', async () => {
+  const f = fakeDriver({ preflight: [{ ok: true }], publish: [{ status: 'clicked' }], findExisting: [{ found: true }] });
+  await new RpaPublisher('threads', f.d, 0).publish(post, [], {});
+  const urls = (f.d.open as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+  expect(urls[1]).toBe('https://www.threads.com/intent/post');
+});

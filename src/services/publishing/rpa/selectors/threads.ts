@@ -6,14 +6,14 @@ import type { PlatformSelectors } from './types';
  */
 export const THREADS: PlatformSelectors = {
   platform: 'threads',
-  version: '2026-11-09.1',
+  version: '2026-11-09.2',
   loggedOut: [
     { css: 'a[href^="/login"]' },
     { css: 'a[role="link"], div[role="button"]', text: '^(log in|masuk|log in with instagram|lanjutkan dengan instagram)$' },
   ],
   ownProfileProof: [{ css: 'div[role="button"], a[role="link"], button', text: '^(edit profile|edit profil)$' }],
   composerOpen: [
-    { css: 'div[role="button"], a[role="link"], button', label: '^(create|buat)$' },
+    { css: 'div[role="button"], a[role="link"], a, button', label: '^(create|buat|new thread|thread baru|utas baru|buat utas|create post|buat postingan)$' },
     { css: 'div[role="button"]', text: "^(what's new\\?|apa yang baru\\?|start a thread|mulai utas)" },
   ],
   composerDialog: [{ css: 'div[role="dialog"]' }],
