@@ -146,6 +146,10 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     try {
       f = await pub.findExisting(post);
     } catch (e) {
+      if ((e as Error).name === 'TabClosedError') {
+        await userCancelled(item, post, 'Cancelled: you closed the SocialPilot tab during the feed check. It may already be posted — check your profile.');
+        return;
+      }
       // Could not look at the feed: never treat that as "not posted". Try the check again later.
       await setPost(post.id, { status: 'verifying', error: `Feed check failed: ${(e as Error).message}` });
       await release(item.id, now + 2 * 60_000);
@@ -218,6 +222,10 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     await markPublished(item, { ...post, attempts }, now, res.url, deps);
     return;
   }
+  if (res.status === 'cancelled') {
+    await userCancelled(item, post, res.reason);
+    return;
+  }
   if (res.status === 'dry-run') {
     await fail(item, post, 'Unexpected dry-run result', deps);
     return;
@@ -237,6 +245,12 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   } else {
     await fail(item, { ...post, attempts }, res.reason, deps);
   }
+}
+
+async function userCancelled(item: QueueItem, post: Post, reason: string) {
+  await setPost(post.id, { status: 'cancelled', error: reason, nextRetryAt: undefined });
+  await finish(item.id);
+  await log('info', 'publish', `${label(post.platform)}: ${reason}`);
 }
 
 async function markPublished(item: QueueItem, post: Post, now: number, url: string | undefined, deps: QueueDeps) {

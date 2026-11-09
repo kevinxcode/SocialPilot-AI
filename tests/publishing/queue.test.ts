@@ -255,3 +255,29 @@ test('identical text waits while an earlier copy is still verifying (no duplicat
   expect((await db.posts.get('copy'))?.status).toBe('scheduled');
   expect((await db.queue.where('postId').equals('copy').first())!.runAt).toBeGreaterThan(T0);
 });
+
+test('closing the automation tab cancels the post without retry', async () => {
+  await addPost('p1');
+  await schedulePost('p1', new Date(T0));
+  const pub = fakePublisher([{ status: 'cancelled', reason: 'Cancelled: you closed the SocialPilot tab before posting.' }]);
+  await processDue(T0, deps(pub));
+  expect(await db.posts.get('p1')).toMatchObject({ status: 'cancelled', error: expect.stringMatching(/closed/) });
+  expect(await db.queue.count()).toBe(0);
+});
+
+test('Publish now (immediate) skips the minimum gap', async () => {
+  await addPost('old', { status: 'published', publishedAt: T0 - 5 * MIN });
+  await addPost('p1');
+  await schedulePost('p1', new Date(T0), { immediate: true });
+  const pub = fakePublisher([{ status: 'published' }]);
+  await processDue(T0, deps(pub));
+  expect(pub.calls).toBe(1);
+});
+
+test('gap wait is explained on the post', async () => {
+  await addPost('old', { status: 'published', publishedAt: T0 - 5 * MIN });
+  await addPost('p1');
+  await schedulePost('p1', new Date(T0));
+  await processDue(T0, deps(fakePublisher([{ status: 'published' }])));
+  expect((await db.posts.get('p1'))?.error).toMatch(/Waiting: min 60 min gap/);
+});

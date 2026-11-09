@@ -4,7 +4,9 @@ export type PublishResult =
   | { status: 'published'; url?: string; note?: string }
   | { status: 'failed'; reason: string }
   | { status: 'unknown'; reason?: string }
-  | { status: 'dry-run' };
+  | { status: 'dry-run' }
+  /** The user closed the automation tab: stop, do not retry. */
+  | { status: 'cancelled'; reason: string };
 
 export interface Publisher {
   platform: Platform;

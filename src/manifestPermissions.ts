@@ -1,4 +1,4 @@
-export const PERMISSIONS = ['storage', 'alarms', 'notifications', 'tabs', 'scripting', 'unlimitedStorage', 'declarativeNetRequestWithHostAccess'] as const;
+export const PERMISSIONS = ['storage', 'alarms', 'notifications', 'tabs', 'scripting', 'unlimitedStorage', 'declarativeNetRequestWithHostAccess', 'tabGroups'] as const;
 export const HOST_PERMISSIONS = [
   'https://*.threads.net/*',
   'https://*.threads.com/*',

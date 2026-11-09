@@ -105,6 +105,14 @@ export class RpaPublisher implements Publisher {
         // Before the publish command nothing can have been posted → failed.
         // After it, the outcome is ambiguous → unknown, and the queue checks the feed before any retry.
         const reason = (e as Error).message;
+        if ((e as Error).name === 'TabClosedError') {
+          return {
+            status: 'cancelled',
+            reason: commandSent
+              ? 'Cancelled: you closed the SocialPilot tab. It may already have been posted — check your profile.'
+              : 'Cancelled: you closed the SocialPilot tab before posting.',
+          };
+        }
         return commandSent ? { status: 'unknown', reason } : { status: 'failed', reason };
       } finally {
         if (!keepOpen) await this.driver.close();
