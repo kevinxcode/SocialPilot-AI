@@ -67,6 +67,22 @@ async function groupTab(tabId: number): Promise<void> {
   }
 }
 
+/**
+ * The extension files on disk were rebuilt (new hashed file names) while this old worker is still running:
+ * injection can never succeed, so reload the extension to pick up the new build.
+ */
+async function inject(tabId: number): Promise<void> {
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: [contentScript] });
+  } catch (e) {
+    if (/Could not load file/i.test((e as Error).message)) {
+      setTimeout(() => chrome.runtime.reload(), 500);
+      throw new Error('Extension was updated on disk — reloading automatically, the post will be retried');
+    }
+    throw e;
+  }
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const TabDriver = {
@@ -92,7 +108,7 @@ export const TabDriver = {
     }
     await sleep(1500 + Math.random() * 1500); // let the SPA hydrate
     const ping = () => chrome.tabs.sendMessage(tabId!, { cmd: 'ping', __rpa: true });
-    await chrome.scripting.executeScript({ target: { tabId: tabId! }, files: [contentScript] });
+    await inject(tabId!);
     try {
       await waitForContentScript(ping, 8_000);
     } catch {
@@ -101,7 +117,7 @@ export const TabDriver = {
         const tab = await chrome.tabs.get(tabId);
         if (tab.status !== 'complete') await waitComplete(tabId, 30_000).catch(() => undefined);
       }
-      await chrome.scripting.executeScript({ target: { tabId: tabId! }, files: [contentScript] });
+      await inject(tabId!);
       await waitForContentScript(ping, 12_000);
     }
     return tabId!;
