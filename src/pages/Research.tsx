@@ -325,6 +325,7 @@ Source: ${url}` : "";
                 Stop
               </Button>
             )}
+            {queuing !== null && job && <JobTimer job={job} />}
           </div>
         )}
         {job && !job.running && job.finishedAt && Date.now() - job.finishedAt < 30 * 60_000 && (
@@ -373,5 +374,27 @@ Source: ${url}` : "";
         )}
       </Card>
     </div>
+  );
+}
+
+const mmss = (ms: number) => {
+  const t = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+};
+
+/** Elapsed time and a rough estimate from the average time per post so far. */
+function JobTimer({ job }: { job: IdeaJob }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const elapsed = now - job.startedAt;
+  const eta = job.done > 0 ? (elapsed / job.done) * (job.total - job.done) : undefined;
+  return (
+    <span className="text-xs text-muted-foreground">
+      {mmss(elapsed)} elapsed
+      {eta !== undefined ? ` · ~${mmss(eta)} left` : " · estimating…"}
+    </span>
   );
 }
