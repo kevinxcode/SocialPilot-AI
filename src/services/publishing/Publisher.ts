@@ -20,4 +20,5 @@ export type RpaCommand =
   | { cmd: 'ping' }
   | { cmd: 'preflight'; platform: Platform; account: { profileUrl: string; pageName?: string } }
   | { cmd: 'publish'; platform: Platform; input: { text: string; files: { name: string; type: string; dataUrl: string }[]; dryRun: boolean; pageName?: string; topic?: string } }
-  | { cmd: 'findExisting'; platform: Platform; fingerprint: string };
+  | { cmd: 'findExisting'; platform: Platform; fingerprint: string }
+  | { cmd: 'scrapeFeed'; platform: Platform; max: number };

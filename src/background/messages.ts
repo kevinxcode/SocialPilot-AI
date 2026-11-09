@@ -7,6 +7,7 @@ export type SwRequest =
   | { type: 'checkGroup'; groupId: string }
   | { type: 'publishNow'; postId: string }
   | { type: 'tick' }
+  | { type: 'researchTrending' }
   | { type: 'replanAutopilot' }
   | { type: 'reviewDecision'; postId: string; approve: boolean };
 

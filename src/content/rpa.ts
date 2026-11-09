@@ -1,5 +1,5 @@
 /** RPA content script — injected on demand by the service worker into the automation tab. */
-import { runFindExisting, runPreflight, runPublish } from '@/services/publishing/rpa/engine';
+import { runFindExisting, runPreflight, runPublish, runScrapeFeed } from '@/services/publishing/rpa/engine';
 import { FACEBOOK } from '@/services/publishing/rpa/selectors/facebook';
 import { THREADS } from '@/services/publishing/rpa/selectors/threads';
 import { FBGROUP } from '@/services/publishing/rpa/selectors/fbgroup';
@@ -22,6 +22,8 @@ if (!w.__socialpilotRpa) {
           return runPublish(cfg, msg.input);
         case 'findExisting':
           return runFindExisting(cfg, msg.fingerprint);
+        case 'scrapeFeed':
+          return runScrapeFeed(cfg, msg.max);
       }
     };
     run()

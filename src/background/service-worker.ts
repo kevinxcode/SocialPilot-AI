@@ -1,3 +1,6 @@
+import { formatInTimeZone } from 'date-fns-tz';
+import { maybeDailyTrending, researchTrending } from '@/services/content/trending';
+import { scrapeThreadsSearch } from '@/services/publishing/rpa/RpaPublisher';
 /**
  * Service worker: owns alarms, the publishing queue, autopilot planning and RPA publishers.
  */
@@ -46,6 +49,24 @@ function keepAlive(): () => void {
   return () => clearInterval(t);
 }
 
+/** Once a day, inside the autopilot window, after the queue is idle: trending research → ideas. */
+async function dailyTrending() {
+  const s = await getSettings();
+  if (!s.trendingResearch || !s.autopilot.enabled || s.autopilot.paused) return;
+  const now = Date.now();
+  const hm = formatInTimeZone(now, s.timezone, 'HH:mm');
+  if (hm < s.autopilot.windowStart || hm > s.autopilot.windowEnd) return;
+  if (await db.queue.where('runAt').belowOrEqual(now).count()) return; // publishing first
+  const brandId = s.activeBrandId ?? (await db.brands.toCollection().first())?.id;
+  const b = brandId ? await db.brands.get(brandId) : undefined;
+  if (!b) return;
+  await maybeDailyTrending(formatInTimeZone(now, s.timezone, 'yyyy-MM-dd'), () =>
+    researchTrending({ scrape: (q) => scrapeThreadsSearch(q), router: aiRouter }, { id: b.id, name: b.name, summary: `${b.industry}
+${b.description}
+Audience: ${b.audience}` }, now),
+  );
+}
+
 let ticking: Promise<void> | null = null;
 let tickStartedAt = 0;
 /** A run that hangs (e.g. a stuck browser API call) must not block the queue forever. */
@@ -60,6 +81,7 @@ export function tick(): Promise<void> {
     try {
       await autopilotHooks.ensurePlanned(Date.now());
       await processDue(Date.now(), deps);
+      await dailyTrending();
     } catch (e) {
       await log('error', 'scheduler', (e as Error).message);
     } finally {
@@ -151,6 +173,20 @@ async function handle(msg: SwRequest): Promise<SwResponse> {
       await schedulePost(msg.postId, new Date(), { immediate: true });
       void tick();
       return { ok: true, message: 'Publishing started — you will get a notification' };
+    }
+    case 'researchTrending': {
+      const s = await getSettings();
+      const brandId = s.activeBrandId ?? (await db.brands.toCollection().first())?.id;
+      const b = brandId ? await db.brands.get(brandId) : undefined;
+      if (!b) return { ok: false, message: 'Add a brand in Brand Knowledge first' };
+      try {
+        const ideas = await researchTrending({ scrape: (q) => scrapeThreadsSearch(q), router: aiRouter }, { id: b.id, name: b.name, summary: `${b.industry}
+${b.description}
+Audience: ${b.audience}` });
+        return { ok: true, message: `${ideas.length} trending ideas saved (autopilot uses them next): ${ideas.map((i) => i.title).join(' · ')}` };
+      } catch (e) {
+        return { ok: false, message: (e as Error).message };
+      }
     }
     case 'tick':
       void tick();

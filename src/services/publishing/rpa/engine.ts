@@ -230,3 +230,44 @@ export async function setTopic(cfg: PlatformSelectors, dialog: Element, box: Ele
     return false;
   }
 }
+
+export interface ScrapedPost {
+  text: string;
+  url?: string;
+  /** likes + replies + reposts parsed from the counters, best effort */
+  engagement: number;
+}
+
+/** Parses "1,2K" / "3.4rb" / "15" into a number. */
+export function parseCount(s: string): number {
+  const m = s.trim().toLowerCase().match(/^([\d.,]+)\s*(k|rb|jt|m)?$/);
+  if (!m) return 0;
+  const n = parseFloat(m[1].replace(/\.(?=\d{3})/g, '').replace(',', '.'));
+  const mult = m[2] === 'k' || m[2] === 'rb' ? 1e3 : m[2] === 'jt' || m[2] === 'm' ? 1e6 : 1;
+  return Number.isFinite(n) ? Math.round(n * mult) : 0;
+}
+
+/** Reads posts on a search/feed page (read-only). */
+export async function runScrapeFeed(cfg: PlatformSelectors, max: number, o: EngineOpts = {}): Promise<{ posts: ScrapedPost[] }> {
+  await waitFor(() => document.querySelector(cfg.postContainer), T(o, 15_000), o.pollMs);
+  // Scroll a little so more results load.
+  for (let i = 0; i < 3 && document.querySelectorAll(cfg.postContainer).length < max; i++) {
+    window.scrollBy(0, 2000);
+    await new Promise((r) => setTimeout(r, o.pollMs ?? 1200));
+  }
+  const re = new RegExp(cfg.permalink);
+  const seen = new Set<string>();
+  const posts: ScrapedPost[] = [];
+  for (const c of Array.from(document.querySelectorAll<HTMLElement>(cfg.postContainer))) {
+    const text = (c.innerText ?? c.textContent ?? '').replace(/\s+/g, ' ').trim();
+    if (text.length < 30 || seen.has(text)) continue;
+    seen.add(text);
+    const a = Array.from(c.querySelectorAll<HTMLAnchorElement>('a[href]')).find((x) => re.test(x.getAttribute('href') ?? ''));
+    const engagement = Array.from(c.querySelectorAll('[role="button"] span, button span'))
+      .map((el) => parseCount(el.textContent ?? ''))
+      .reduce((s, n) => s + n, 0);
+    posts.push({ text: text.slice(0, 600), url: a ? new URL(a.getAttribute('href')!, location.origin).toString() : undefined, engagement });
+    if (posts.length >= max) break;
+  }
+  return { posts: posts.sort((x, y) => y.engagement - x.engagement) };
+}

@@ -212,6 +212,8 @@ export interface Settings {
   autoPickMedia: boolean;
   /** Threads: let the AI choose a topic for each post */
   autoTopic: boolean;
+  /** once a day: read trending Threads posts and create post ideas for autopilot */
+  trendingResearch: boolean;
   activeBrandId?: string;
   router: {
     mode: RouterMode;

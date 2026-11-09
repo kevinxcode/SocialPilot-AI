@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { sendToSw } from '@/background/messages';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Loader2, Sparkles, Trash2 } from 'lucide-react';
 import { Badge, Button, Card, CardTitle, Empty, Input, Switch, useToast } from '@/components/ui';
@@ -14,6 +15,12 @@ export function TopicsPage() {
   const topics = useLiveQuery(() => db.topics.toArray(), []) ?? [];
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [trend, setTrend] = useState<{ busy?: boolean; msg?: string; ok?: boolean }>({});
+  const runTrending = async () => {
+    setTrend({ busy: true });
+    const r = await sendToSw({ type: 'researchTrending' });
+    setTrend({ msg: r.message, ok: r.ok });
+  };
   const sorted = [...topics].sort((a, b) => Number(b.enabled) - Number(a.enabled) || b.uses - a.uses || a.name.localeCompare(b.name));
 
   const add = async () => {
@@ -58,6 +65,21 @@ export function TopicsPage() {
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} Research topics with AI
           </Button>
         </div>
+      </Card>
+      <Card>
+        <CardTitle>Daily trending research</CardTitle>
+        <p className="mb-3 text-sm text-muted-foreground">
+          Once a day (inside the autopilot window, when Chrome is open) SocialPilot opens a background tab, reads the most engaged Threads posts
+          for your top 3 topics (read-only) and the AI turns them into 6 original post ideas. Autopilot uses the newest of these ideas first.
+        </p>
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <Switch checked={!!settings?.trendingResearch} onChange={(v) => update({ trendingResearch: v })} label="Daily trending research" />
+          Run daily
+          <Button variant="outline" disabled={trend.busy} onClick={runTrending}>
+            {trend.busy && <Loader2 className="h-4 w-4 animate-spin" />} Run now
+          </Button>
+        </div>
+        {trend.msg && <p className={`mt-2 text-xs ${trend.ok ? 'text-emerald-600' : 'text-red-500'}`}>{trend.msg}</p>}
       </Card>
       <Card>
         {sorted.length === 0 ? (

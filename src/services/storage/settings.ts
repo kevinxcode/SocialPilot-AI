@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS: Settings = {
   groupGapMinutes: 30,
   autoPickMedia: true,
   autoTopic: true,
+  trendingResearch: true,
   router: {
     mode: 'auto',
     priority: ['ollama', 'nvidia', 'openrouter'],

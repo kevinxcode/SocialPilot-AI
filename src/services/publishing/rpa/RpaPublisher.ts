@@ -1,7 +1,7 @@
 import { db } from '@/services/storage/db';
 import type { Account, Platform, Post } from '@/types/models';
 import type { Publisher, PublishResult } from '../Publisher';
-import type { EngineResult, PreflightResult } from './engine';
+import type { EngineResult, PreflightResult, ScrapedPost } from './engine';
 import { TabDriver, exclusive } from './tabDriver';
 
 const CONFIRM_WINDOW_MS = 90_000;
@@ -143,6 +143,23 @@ export class RpaPublisher implements Publisher {
       }
     });
   }
+}
+
+/** Opens a Threads search for each query and reads the top posts (read-only, never posts). */
+export function scrapeThreadsSearch(queries: string[], perQuery = 8, driver: Driver = TabDriver as unknown as Driver): Promise<{ query: string; posts: ScrapedPost[] }[]> {
+  return exclusive(async () => {
+    const out: { query: string; posts: ScrapedPost[] }[] = [];
+    try {
+      for (const q of queries) {
+        const tabId = await driver.open(`https://www.threads.com/search?q=${encodeURIComponent(q)}&serp_type=default`);
+        const r = await driver.send<{ posts: ScrapedPost[] }>(tabId, { cmd: 'scrapeFeed', platform: 'threads', max: perQuery });
+        out.push({ query: q, posts: r.posts ?? [] });
+      }
+    } finally {
+      await driver.close();
+    }
+    return out;
+  });
 }
 
 export const publishers: Record<Platform, Publisher> = {

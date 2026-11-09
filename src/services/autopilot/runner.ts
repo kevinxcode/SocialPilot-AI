@@ -1,3 +1,4 @@
+import { takeTrendingIdea } from '@/services/content/trending';
 import { db, log } from '@/services/storage/db';
 import { getSettings } from '@/services/storage/settings';
 import { generateVariations, type RouterLike } from '@/services/content/generate';
@@ -56,8 +57,9 @@ export async function runSlot(item: QueueItem, now: number, ctx: RunnerCtx): Pro
   const brandId = await activeBrandId(s.activeBrandId);
   if (!brandId) return skip(item, 'No brand in the knowledge base', ctx);
 
-  const ideas = await db.ideas.where('brandId').equals(brandId).toArray();
-  const idea = ideas.length ? ideas[hash(item.slotKey ?? item.id) % ideas.length] : undefined;
+  // Fresh trending ideas (daily research) first; otherwise rotate through saved ideas.
+  const ideas = (await db.ideas.where('brandId').equals(brandId).toArray()).filter((i) => !i.kind.startsWith('trending'));
+  const idea = (s.trendingResearch ? await takeTrendingIdea(brandId, now) : undefined) ?? (ideas.length ? ideas[hash(item.slotKey ?? item.id) % ideas.length] : undefined);
   const contentType = item.contentType ?? 'educational';
   const input = {
     brandId,
