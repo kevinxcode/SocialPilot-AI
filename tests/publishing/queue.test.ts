@@ -53,6 +53,17 @@ beforeEach(async () => {
   notes = [];
 });
 
+test('an uncertain reply is verified but never automatically submitted a second time', async () => {
+  await addPost('reply', { status: 'verifying', attempts: 1, replyTo: 'https://www.threads.com/@owner/post/abc' });
+  await db.queue.add({ id: 'q', postId: 'reply', kind: 'post', platform: 'threads', runAt: T0 });
+  const pub = fakePublisher([{ status: 'published' }]);
+  await processDue(T0, deps(pub));
+  expect(pub.finds).toBe(1);
+  expect(pub.calls).toBe(0);
+  expect((await db.posts.get('reply'))?.status).toBe('verifying');
+  expect((await db.queue.get('q'))?.runAt).toBe(T0 + 30 * MIN);
+});
+
 test('schedule then process publishes once and records url', async () => {
   await addPost('p1');
   await schedulePost('p1', new Date(T0));
@@ -280,4 +291,14 @@ test('gap wait is explained on the post', async () => {
   await schedulePost('p1', new Date(T0));
   await processDue(T0, deps(fakePublisher([{ status: 'published' }])));
   expect((await db.posts.get('p1'))?.error).toMatch(/Waiting: min 60 min gap/);
+});
+
+test('scheduled posts without a queue item are re-queued', async () => {
+  const { repairOrphans } = await import('@/services/publishing/PublishingQueue');
+  await addPost('p1', { status: 'scheduled', scheduledAt: T0 - 3 * 60 * MIN });
+  await addPost('p2');
+  await schedulePost('p2', new Date(T0 + MIN));
+  expect(await repairOrphans(T0)).toBe(1);
+  expect((await db.queue.where('postId').equals('p1').first())?.runAt).toBe(T0);
+  expect(await repairOrphans(T0)).toBe(0);
 });

@@ -1,4 +1,5 @@
 import { cleanGroupName } from '@/services/publishing/rpa/engine';
+import { automaticComments } from '@/services/autopilot/comments';
 import { uid } from '@/lib/utils';
 import { formatInTimeZone } from 'date-fns-tz';
 import { maybeDailyTrending, researchTrending } from '@/services/content/trending';
@@ -9,7 +10,7 @@ import { scrapeJoinedGroups, scrapeThreadsSearch } from '@/services/publishing/r
 import { topicForPost } from '@/services/content/topics';
 import { aiRouter } from '@/services/ai/AIRouter';
 import { db, log, seedIfEmpty } from '@/services/storage/db';
-import { processDue, recoverOnStartup, schedulePost, type QueueDeps } from '@/services/publishing/PublishingQueue';
+import { repairOrphans, processDue, recoverOnStartup, schedulePost, type QueueDeps } from '@/services/publishing/PublishingQueue';
 import { publishers } from '@/services/publishing/rpa/RpaPublisher';
 import { fingerprint } from '@/services/publishing/fingerprint';
 import { autopilotHooks } from './autopilotHooks';
@@ -82,7 +83,10 @@ export function tick(): Promise<void> {
   ticking = (async () => {
     try {
       await autopilotHooks.ensurePlanned(Date.now());
+      const fixed = await repairOrphans(Date.now());
+      if (fixed) await log('warn', 'queue', `Re-queued ${fixed} scheduled posts that had lost their queue entry`);
       await processDue(Date.now(), deps);
+      await automaticComments().catch((e: Error) => log('warn', 'comments', e.message));
       await dailyTrending();
     } catch (e) {
       await log('error', 'scheduler', (e as Error).message);

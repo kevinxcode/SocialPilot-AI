@@ -129,6 +129,9 @@ export interface Post {
   note?: string;
   /** Threads topic / community tag */
   topic?: string;
+  /** Threads reply target. Preserved across retries; never treat a reply as a root post. */
+  replyTo?: string;
+  replyTargetText?: string;
   fingerprint: string;
   source: 'manual' | 'autopilot';
   attempts: number;
@@ -214,6 +217,7 @@ export interface Settings {
   autoTopic: boolean;
   /** once a day: read trending Threads posts and create post ideas for autopilot */
   trendingResearch: boolean;
+  comments: { enabled: boolean; dailyLimit: number; gapMinutes: number };
   activeBrandId?: string;
   router: {
     mode: RouterMode;

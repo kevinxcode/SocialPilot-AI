@@ -140,6 +140,13 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     return;
   }
   const pub = deps.publishers[post.platform];
+  if (post.replyTo && post.status === 'scheduled') {
+    const current = await getSettings();
+    if (!current.comments.enabled || !current.autopilot.enabled || current.autopilot.paused || !current.autopilot.platforms.threads) {
+      await release(item.id, now + 5 * 60_000);
+      return;
+    }
+  }
 
   // Ambiguous previous attempt (unknown result, or a run that died mid-publish): look before (re)posting.
   const ambiguous = post.status === 'verifying' || post.status === 'processing';
@@ -159,6 +166,12 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     }
     if (f.found) {
       await markPublished(item, post, now, f.url, deps);
+      return;
+    }
+    // A missing visible reply is not proof it was never submitted (collapsed/moderated replies).
+    if (post.replyTo) {
+      await setPost(post.id, { status: 'verifying', error: 'Reply not yet visible; automatic resend disabled to prevent duplicates', nextRetryAt: now + 30 * 60_000 });
+      await release(item.id, now + 30 * 60_000);
       return;
     }
     if (post.attempts >= MAX_ATTEMPTS) {
@@ -209,7 +222,7 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     return;
   }
 
-  if (post.platform === 'threads' && !post.topic && deps.pickTopic) {
+  if (post.platform === 'threads' && !post.replyTo && !post.topic && deps.pickTopic) {
     const topic = await deps.pickTopic(post).catch(() => undefined);
     if (topic) {
       post.topic = topic;
@@ -287,5 +300,22 @@ export async function recoverOnStartup(now: number): Promise<void> {
     await db.queue.toCollection().modify((q) => {
       delete q.lockedUntil;
     });
+  });
+}
+
+/**
+ * Scheduled/verifying posts whose queue item went missing (e.g. an interrupted run) would wait forever.
+ * Re-queue them now; the gap and duplicate rules still apply.
+ */
+export async function repairOrphans(now: number): Promise<number> {
+  return db.transaction('rw', db.posts, db.queue, async () => {
+    const live = await db.posts.where('status').anyOf('scheduled', 'verifying').toArray();
+    let n = 0;
+    for (const p of live) {
+      if (await db.queue.where('postId').equals(p.id).count()) continue;
+      await db.queue.add({ id: uid(), kind: 'post', platform: p.platform, postId: p.id, runAt: Math.max(now, p.scheduledAt ?? 0) });
+      n++;
+    }
+    return n;
   });
 }

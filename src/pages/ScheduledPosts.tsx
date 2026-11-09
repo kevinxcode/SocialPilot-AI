@@ -76,7 +76,7 @@ export function ScheduledPostsPage({ initialView = 'queue' }: { initialView?: Vi
             {list.map((p) => (
               <tr key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setOpen(p)}>
                 <td className="whitespace-nowrap">{fmt(view === 'history' ? (p.publishedAt ?? p.updatedAt) : p.scheduledAt)}</td>
-                <td>{platformLabel(p.platform)}</td>
+                <td>{platformLabel(p.platform)}{p.replyTo ? ' · Reply' : ''}</td>
                 <td className="max-w-md truncate">{p.text}</td>
                 <td>
                   <StatusBadge post={p} />

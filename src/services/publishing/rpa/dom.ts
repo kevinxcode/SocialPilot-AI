@@ -11,11 +11,12 @@ function matches(el: Element, s: Sel): boolean {
 }
 
 function isHidden(el: Element): boolean {
-  const h = el as HTMLElement;
-  if (h.getAttribute('aria-hidden') === 'true') return true;
-  // jsdom has no layout; only trust computed display/visibility
-  const cs = typeof getComputedStyle === 'function' ? getComputedStyle(h) : null;
-  return !!cs && (cs.visibility === 'hidden' || (cs.display === 'none' && h.tagName !== 'INPUT'));
+  for (let h: Element | null = el; h; h = h.parentElement) {
+    if (h.getAttribute('aria-hidden') === 'true' || h.hasAttribute('hidden')) return true;
+    const cs = typeof getComputedStyle === 'function' ? getComputedStyle(h) : null;
+    if (cs && (cs.visibility === 'hidden' || (cs.display === 'none' && !(h === el && h.tagName === 'INPUT')))) return true;
+  }
+  return false;
 }
 
 /** First element matching any selector (in order). Prefers the innermost match for text selectors. */

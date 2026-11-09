@@ -79,3 +79,12 @@ test('Threads publish opens the official compose intent URL after preflight', as
   const urls = (f.d.open as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
   expect(urls[1]).toBe('https://www.threads.com/intent/post');
 });
+
+test('Threads replies open the parent post and verify the reply instead of creating a root post', async () => {
+  const target = 'https://www.threads.com/@owner/post/abc';
+  const f = fakeDriver({ preflight: [{ ok: true }], reply: [{ status: 'clicked' }], findReply: [{ found: true, url: 'https://www.threads.com/@cuciqu.pro/post/reply' }] });
+  const r = await new RpaPublisher('threads', f.d, 0).publish({ ...post, replyTo: target, replyTargetText: 'Original question' }, [], {});
+  expect(r.status).toBe('published');
+  expect(f.sent).toEqual(['preflight', 'reply', 'findReply']);
+  expect(f.d.open).toHaveBeenNthCalledWith(2, target, { focus: true });
+});

@@ -10,7 +10,7 @@ import { validatePost, visibleLength, LIMITS } from '@/services/content/validate
 import type { Variation } from '@/services/content/parse';
 import { createDraft } from '@/services/publishing/posts';
 import type { GenerateResult } from '@/services/ai/AIRouter';
-import type { Language, Platform } from '@/types/models';
+import type { Brand, Language, Platform } from '@/types/models';
 import { getActiveBrandId } from './BrandKnowledge';
 import { PostActions, type PostActionsProps } from './PostActions';
 import { groupInstructions } from '@/services/autopilot/runner';
@@ -23,6 +23,7 @@ const TRANSFORMS: { id: TransformAction; label: string }[] = [
   { id: 'tone', label: 'Change tone' },
   { id: 'hashtags', label: 'Hashtags' },
 ];
+const EMPTY_BRANDS: Brand[] = [];
 
 export function VariationCard(props: {
   v: Variation;
@@ -113,7 +114,7 @@ export function VariationCard(props: {
 export function ContentStudioPage() {
   const { settings } = useSettings();
   const toast = useToast();
-  const brands = useLiveQuery(() => db.brands.toArray(), []) ?? [];
+  const brands = useLiveQuery(() => db.brands.toArray(), []) ?? EMPTY_BRANDS;
   const [brandId, setBrandId] = useState<string>('');
   const [input, setInput] = useState<Omit<StudioInput, 'brandId'>>({
     topic: '',

@@ -21,10 +21,11 @@ export function MediaThumb({ m, className }: { m: MediaItem; className?: string 
 }
 
 const fmtSize = (b: number) => (b > 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.round(b / 1e3)} KB`);
+const EMPTY_MEDIA: MediaItem[] = [];
 
 export function MediaLibraryPage() {
   const toast = useToast();
-  const media = useLiveQuery(() => db.media.orderBy('createdAt').reverse().toArray(), []) ?? [];
+  const media = useLiveQuery(() => db.media.orderBy('createdAt').reverse().toArray(), []) ?? EMPTY_MEDIA;
   const [q, setQ] = useState('');
   const [category, setCategory] = useState('');
   const [usage, setUsage] = useState<'' | 'used' | 'unused'>('');

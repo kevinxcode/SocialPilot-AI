@@ -3,6 +3,7 @@ import type { Account, Platform, Post } from '@/types/models';
 import type { Publisher, PublishResult } from '../Publisher';
 import type { EngineResult, PreflightResult, ScrapedPost } from './engine';
 import { TabDriver, exclusive } from './tabDriver';
+import { canonicalThreadUrl } from '@/services/content/comments';
 
 const CONFIRM_WINDOW_MS = 90_000;
 
@@ -76,11 +77,16 @@ export class RpaPublisher implements Publisher {
       let commandSent = false;
       try {
         const acc = await this.target(post);
+        if (post.replyTo && acc.id !== post.accountId) return { status: 'failed', reason: 'Reply account changed; skipped' };
         const pre = await this.preflightOn(acc);
         let tabId = pre.tabId;
         const res = pre.res;
         if (!res.ok) return { status: 'failed', reason: res.reason ?? 'Preflight failed' };
-        if (this.platform === 'threads') {
+        if (post.replyTo) {
+          const target = canonicalThreadUrl(post.replyTo);
+          if (this.platform !== 'threads' || !target || !post.replyTargetText) return { status: 'failed', reason: 'Invalid reply target' };
+          tabId = await this.driver.open(target, { focus: true });
+        } else if (this.platform === 'threads') {
           // Official compose intent: opens the composer directly, independent of where the "create" button sits.
           tabId = await this.driver.open(new URL('/intent/post', acc.profileUrl).toString());
         }
@@ -89,7 +95,10 @@ export class RpaPublisher implements Publisher {
         );
         if (this.platform !== 'threads') await this.driver.focus?.(tabId);
         commandSent = !opts.dryRun;
-        const r = await this.driver.send<EngineResult>(tabId, {
+        const r = await this.driver.send<EngineResult>(tabId, post.replyTo ? {
+          cmd: 'reply',
+          input: { targetUrl: post.replyTo, targetText: post.replyTargetText!, text: post.text, dryRun: !!opts.dryRun },
+        } : {
           cmd: 'publish',
           platform: this.platform,
           input: { text: post.text, files, dryRun: !!opts.dryRun, pageName: acc.name, topic: this.platform === 'threads' ? post.topic : undefined },
@@ -101,7 +110,9 @@ export class RpaPublisher implements Publisher {
         if (r.status === 'failed') return { status: 'failed', reason: r.reason };
         if (r.status === 'clicked' && r.pending) return { status: 'published', note: 'Pending admin approval in the group' };
         // clicked or unknown: confirm on the feed before claiming success
-        const found = await this.confirm(acc, post.fingerprint);
+        const found = post.replyTo
+          ? await this.driver.send<{ found: boolean; url?: string }>(tabId, { cmd: 'findReply', targetUrl: post.replyTo, profileUrl: acc.profileUrl, fingerprint: post.fingerprint })
+          : await this.confirm(acc, post.fingerprint);
         if (found.found) return { status: 'published', url: found.url, ...(post.topic && r.status === 'clicked' && r.topicSet === false ? { note: `Topic "${post.topic}" could not be set (Threads UI)` } : {}) };
         return { status: 'unknown', reason: r.status === 'unknown' ? r.reason : 'Post not yet visible on the profile/page feed' };
       } catch (e) {
@@ -135,11 +146,15 @@ export class RpaPublisher implements Publisher {
     return { found: false };
   }
 
-  findExisting(post: Pick<Post, 'fingerprint' | 'platform' | 'groupId'>): Promise<{ found: boolean; url?: string }> {
+  findExisting(post: Pick<Post, 'fingerprint' | 'platform' | 'groupId' | 'replyTo'>): Promise<{ found: boolean; url?: string }> {
     return exclusive(async () => {
       try {
         const acc = await this.target(post);
-        const tabId = await this.driver.open(acc.profileUrl);
+        if (post.replyTo && !canonicalThreadUrl(post.replyTo)) throw new Error('Invalid reply target');
+        const tabId = await this.driver.open(post.replyTo ?? acc.profileUrl);
+        if (post.replyTo) return await this.driver.send<{ found: boolean; url?: string }>(tabId, {
+          cmd: 'findReply', targetUrl: post.replyTo, profileUrl: acc.profileUrl, fingerprint: post.fingerprint,
+        });
         return await this.driver.send<{ found: boolean; url?: string }>(tabId, { cmd: 'findExisting', platform: this.platform, fingerprint: post.fingerprint });
       } finally {
         await this.driver.close();

@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoPickMedia: true,
   autoTopic: true,
   trendingResearch: true,
+  comments: { enabled: true, dailyLimit: 3, gapMinutes: 60 },
   router: {
     mode: 'auto',
     priority: ['ollama', 'nvidia', 'openrouter'],

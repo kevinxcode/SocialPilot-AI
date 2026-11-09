@@ -22,8 +22,9 @@ async function tabAlive(tabId?: number): Promise<boolean> {
   }
 }
 
-function waitComplete(tabId: number, timeoutMs = 45_000): Promise<void> {
-  return new Promise((resolve, reject) => {
+function waitComplete(tabId: number, timeoutMs = 45_000): Promise<void> & { cancel: () => void } {
+  let cancel = () => {};
+  const promise = new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
       reject(new Error('Page load timed out'));
@@ -36,7 +37,15 @@ function waitComplete(tabId: number, timeoutMs = 45_000): Promise<void> {
       }
     };
     chrome.tabs.onUpdated.addListener(listener);
+    cancel = () => {
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    };
   });
+  // A navigation call can fail before its waiter is awaited.
+  void promise.catch(() => undefined);
+  return Object.assign(promise, { cancel: () => cancel() });
 }
 
 /** Thrown when the user closes the automation tab mid-run. */
@@ -105,8 +114,12 @@ export const TabDriver = {
     if (tabId != null && closedTabs.has(tabId)) throw new TabClosedError();
     if (await tabAlive(tabId)) {
       const done = waitComplete(tabId!);
-      await retryTabEdit(() => chrome.tabs.update(tabId!, { url }));
-      await done;
+      try {
+        await retryTabEdit(() => chrome.tabs.update(tabId!, { url }));
+        await done;
+      } finally {
+        done.cancel();
+      }
       if (opts.focus) await retryTabEdit(() => chrome.tabs.update(tabId!, { active: true }));
     } else {
       // A tab next to the user's tabs (not a popup window), opened in the background.
@@ -138,6 +151,7 @@ export const TabDriver = {
   async send<T>(tabId: number, msg: RpaCommand, timeoutMs = 150_000): Promise<T> {
     if (closedTabs.has(tabId)) throw new TabClosedError();
     let off = () => undefined as void;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const closed = new Promise<T>((_r, rej) => {
       closeWaiters.set(tabId, () => rej(new TabClosedError()));
       off = () => void closeWaiters.delete(tabId);
@@ -145,15 +159,15 @@ export const TabDriver = {
     return Promise.race([
       closed,
       chrome.tabs.sendMessage(tabId, { ...msg, __rpa: true }) as Promise<T>,
-      new Promise<T>((_r, rej) => setTimeout(() => rej(new Error('Automation step timed out')), timeoutMs)),
+      new Promise<T>((_r, rej) => { timer = setTimeout(() => rej(new Error('Automation step timed out')), timeoutMs); }),
     ]).catch((e) => {
       // The message channel breaks when the tab goes away; report that as a user close.
       throw closedTabs.has(tabId) ? new TabClosedError() : e;
-    }).finally(off);
+    }).finally(() => { off(); clearTimeout(timer); });
   },
 
   async focus(tabId: number): Promise<void> {
-    await retryTabEdit(() => chrome.tabs.update(tabId, { active: true })).catch(() => undefined);
+    await retryTabEdit(() => chrome.tabs.update(tabId, { active: true }));
     await sleep(800);
   },
 

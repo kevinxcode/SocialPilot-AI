@@ -91,7 +91,13 @@ export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o:
     click(opener);
   }
 
-  const dialog = await waitFor(() => findBySelectors(cfg.composerDialog), T(o, 15_000), o.pollMs);
+  const dialog = await waitFor(() => {
+    // Ignore unrelated dialogs (notifications, account menus) and wait for the real editor.
+    for (const el of Array.from(document.querySelectorAll('[role="dialog"]'))) {
+      if (findBySelectors(cfg.textbox, el)) return el;
+    }
+    return null;
+  }, T(o, 15_000), o.pollMs);
   const box = dialog && (await waitFor(() => findBySelectors(cfg.textbox, dialog), T(o, 10_000), o.pollMs));
   if (!dialog || !box) return { status: 'failed', reason: 'Composer did not open' };
 

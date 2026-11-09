@@ -4,6 +4,7 @@ import { FACEBOOK } from '@/services/publishing/rpa/selectors/facebook';
 import { THREADS } from '@/services/publishing/rpa/selectors/threads';
 import { FBGROUP } from '@/services/publishing/rpa/selectors/fbgroup';
 import type { RpaCommand } from '@/services/publishing/Publisher';
+import { runReply, findReply } from '@/services/publishing/rpa/reply';
 
 const w = window as unknown as { __socialpilotRpa?: boolean };
 if (!w.__socialpilotRpa) {
@@ -14,6 +15,10 @@ if (!w.__socialpilotRpa) {
     const cfg = p === 'facebook' ? FACEBOOK : p === 'fbgroup' ? FBGROUP : THREADS;
     const run = async () => {
       switch (msg.cmd) {
+        case 'reply':
+          return runReply(msg.input);
+        case 'findReply':
+          return findReply(msg.targetUrl, msg.profileUrl, msg.fingerprint);
         case 'ping':
           return { ok: true };
         case 'preflight':

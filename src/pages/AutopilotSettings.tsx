@@ -27,6 +27,16 @@ export function AutopilotSettings() {
         platform. Posts with prices/numbers not in the knowledge base are regenerated once, then skipped.
       </p>
       <div className="grid gap-4 md:grid-cols-4">
+        <Field label="Automatic Threads comments">
+          <Switch checked={settings.comments.enabled} onChange={(enabled) => update({ comments: { enabled } })} label="Automatic comments without approval" />
+          <p className="mt-1 text-xs text-muted-foreground">Searches enabled topics and replies to relevant posts during the autopilot window. No approval required. Results appear in the queue.</p>
+        </Field>
+        <Field label="Maximum comments per day">
+          <Input type="number" min={0} max={10} value={settings.comments.dailyLimit} onChange={(e) => update({ comments: { dailyLimit: Math.max(0, Math.min(10, Number(e.target.value) || 0)) } })} />
+        </Field>
+        <Field label="Minimum comment gap (minutes)">
+          <Input type="number" min={30} value={settings.comments.gapMinutes} onChange={(e) => update({ comments: { gapMinutes: Math.max(30, Number(e.target.value) || 60) } })} />
+        </Field>
         <Field label="Enabled">
           <div className="flex h-9 items-center gap-3">
             <Switch checked={a.enabled} onChange={(v) => set({ enabled: v })} label="Enable autopilot" />
