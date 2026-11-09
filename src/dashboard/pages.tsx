@@ -10,6 +10,8 @@ import { MediaLibraryPage } from '@/pages/MediaLibrary';
 import { SocialAccountsPage } from '@/pages/SocialAccounts';
 import { ScheduledPostsPage } from '@/pages/ScheduledPosts';
 import { CalendarPage } from '@/pages/Calendar';
+import { DashboardPage } from '@/pages/Dashboard';
+import { AnalyticsPage } from '@/pages/Analytics';
 
 type Render = (navigate: (p: PageId) => void) => ReactNode;
 
@@ -23,4 +25,6 @@ export const PAGES: Partial<Record<PageId, Render>> = {
   accounts: () => <SocialAccountsPage />,
   scheduled: () => <ScheduledPostsPage />,
   calendar: () => <CalendarPage />,
+  dashboard: (navigate) => <DashboardPage navigate={navigate} />,
+  analytics: () => <AnalyticsPage />,
 };
