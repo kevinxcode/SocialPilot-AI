@@ -10,11 +10,12 @@ export const FACEBOOK: PlatformSelectors = {
   version: '2026-11-09.1',
   loggedOut: [{ css: 'form#login_form' }, { css: 'input[name="email"]' }, { css: 'form[action*="/login"]' }],
   ownProfileProof: [
-    { css: 'div[role="button"], span', text: "^(what's on your mind\\?|apa yang anda pikirkan\\?|apa yang kamu pikirkan\\?)$" },
+    // "What's on your mind, CuciQu Pro?" — the Page name is often included
+    { css: 'div[role="button"], span', text: "^(what's on your mind|apa yang anda pikirkan|apa yang kamu pikirkan)" },
   ],
   switchToPage: [{ css: 'div[role="button"], a[role="button"]', text: '^(switch now|switch|beralih sekarang|beralih)$' }],
   composerOpen: [
-    { css: 'div[role="button"]', text: "^(what's on your mind\\?|apa yang anda pikirkan\\?|apa yang kamu pikirkan\\?)$" },
+    { css: 'div[role="button"]', text: "^(what's on your mind|apa yang anda pikirkan|apa yang kamu pikirkan)" },
     { css: 'div[role="button"]', text: '^(create post|buat postingan)$' },
   ],
   composerDialog: [{ css: 'div[role="dialog"]', label: '^(create post|buat postingan)$' }, { css: 'div[role="dialog"]' }],
