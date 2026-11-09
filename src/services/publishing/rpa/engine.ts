@@ -242,7 +242,7 @@ export interface ScrapedPost {
 export function parseCount(s: string): number {
   const m = s.trim().toLowerCase().match(/^([\d.,]+)\s*(k|rb|jt|m)?$/);
   if (!m) return 0;
-  const n = parseFloat(m[1].replace(/\.(?=\d{3}b)/g, '').replace(',', '.'));
+  const n = parseFloat(m[1].replace(/\.(?=\d{3}\b)/g, '').replace(',', '.'));
   const mult = m[2] === 'k' || m[2] === 'rb' ? 1e3 : m[2] === 'jt' || m[2] === 'm' ? 1e6 : 1;
   return Number.isFinite(n) ? Math.round(n * mult) : 0;
 }
