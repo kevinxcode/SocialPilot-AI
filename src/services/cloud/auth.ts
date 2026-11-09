@@ -21,7 +21,7 @@ export function authUrl(cfg: CloudConfig, redirectUri: string, interactive: bool
     redirect_uri: redirectUri,
     scope: SCOPES.join(' '),
     include_granted_scopes: 'true',
-    ...(interactive ? { prompt: 'select_account' } : { prompt: 'none' }),
+    ...(interactive ? { prompt: 'consent select_account' } : { prompt: 'none' }),
     ...(loginHint ? { login_hint: loginHint } : {}),
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${p}`;

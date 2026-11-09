@@ -6,7 +6,8 @@ import { getCloudConfig, getSession, setCloudConfig, type CloudConfig, type Clou
 import { signOut } from '@/services/cloud/auth';
 import { loginWithGoogle } from '@/services/cloud/login';
 import { getPassphrase, setPassphrase } from '@/services/cloud/crypto';
-import { resealSettings, resetPull, SYNC_STATUS_KEY } from '@/services/cloud/sync';
+import { DRIVE_CONSENT_KEY, resealSettings, resetPull, SYNC_STATUS_KEY } from '@/services/cloud/sync';
+import { signIn } from '@/services/cloud/auth';
 import { currentLease, takeOver, type Lease } from '@/services/cloud/leader';
 import { builtInConfig, deviceId } from '@/services/cloud/config';
 
@@ -34,6 +35,7 @@ export function CloudPage() {
   const [me, setMe] = useState('');
   const status = useStorage<Status>(SYNC_STATUS_KEY);
   const keysLocked = useStorage<boolean>('cloudKeysLocked');
+  const driveNeeded = useStorage<boolean>(DRIVE_CONSENT_KEY);
   const redirect = typeof chrome !== 'undefined' && chrome.identity ? chrome.identity.getRedirectURL() : '';
 
   const refresh = async () => {
@@ -71,6 +73,14 @@ export function CloudPage() {
     run('login', async () => {
       if ((await loginWithGoogle((m) => confirm(m))) === 'cancelled') throw new Error('Sign-in cancelled — nothing was changed');
     }, 'Signed in — syncing now');
+
+  // Shows Google's permission screen again (same account) so the Google Drive box can be ticked.
+  const allowDrive = () =>
+    run('drive', async () => {
+      await signIn();
+      await chrome.storage.local.remove(DRIVE_CONSENT_KEY);
+      await sendToSw({ type: 'tick' });
+    }, 'Google Drive allowed — syncing media now');
 
   const savePass = () =>
     run('pass', async () => {
@@ -121,6 +131,17 @@ export function CloudPage() {
             )}
             <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => run('sync', () => sendToSw({ type: 'tick' }), 'Sync started')}>
               <RefreshCw className="h-3.5 w-3.5" /> Sync now
+            </Button>
+          </div>
+        )}
+        {signedIn && driveNeeded && (
+          <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+            <p className="mb-2">
+              Google Drive is not allowed yet, so media files are not synced. Click the button, choose your account and <b>tick the Google Drive
+              box</b> on Google’s permission screen, then click Continue.
+            </p>
+            <Button size="sm" disabled={!!busy} onClick={allowDrive}>
+              Allow Google Drive
             </Button>
           </div>
         )}

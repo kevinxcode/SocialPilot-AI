@@ -34,6 +34,8 @@ const LAST_PULL = 'syncLastPull';
 const LAST_UID = 'syncUid';
 const SETTINGS_ID = 'main';
 export const SYNC_STATUS_KEY = 'syncStatus';
+/** Set when Google Drive refused the upload because the Drive permission was not granted. */
+export const DRIVE_CONSENT_KEY = 'driveNeedsConsent';
 /** Max Drive uploads per sync round (the rest follow next round, so publishing is never held up for long). */
 const UPLOADS_PER_ROUND = 5;
 
@@ -191,7 +193,20 @@ async function serialize(table: string, id: string, uploads: { left: number }): 
     if (!m.driveFileId && m.blob) {
       if (uploads.left <= 0) return 'later';
       uploads.left--;
-      const fileId = await uploadMedia(m);
+      let fileId: string;
+      try {
+        fileId = await uploadMedia(m);
+        await chrome.storage.local.remove(DRIVE_CONSENT_KEY);
+      } catch (e) {
+        // Drive permission not granted (checkbox left unticked on Google's consent screen): sync everything else,
+        // keep the media for later, and ask the user once to allow Google Drive.
+        if (/\b403\b|insufficient/i.test((e as Error).message)) {
+          await chrome.storage.local.set({ [DRIVE_CONSENT_KEY]: true });
+          uploads.left = 0;
+          return 'later';
+        }
+        throw e;
+      }
       await quietly([db.media], () => db.media.update(m.id, { driveFileId: fileId }));
       m = { ...m, driveFileId: fileId };
     }
