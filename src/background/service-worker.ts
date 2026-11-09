@@ -173,7 +173,7 @@ async function handle(msg: SwRequest): Promise<SwResponse> {
       const r = await publishers[msg.platform].publish(temp, await loadMedia(temp.mediaIds), { dryRun: true });
       await log('info', 'dry-run', `${msg.platform}: ${r.status}${'reason' in r && r.reason ? ` — ${r.reason}` : ''}`);
       return r.status === 'dry-run'
-        ? { ok: true, message: 'Composer filled, Post was NOT clicked. Check the automation tab, then close it.' }
+        ? { ok: true, message: `Composer filled, Post was NOT clicked. ${'note' in r && r.note ? `${r.note}. ` : ''}Check the automation tab, then close it.` }
         : { ok: false, message: 'reason' in r ? r.reason : r.status };
     }
     case 'publishNow': {

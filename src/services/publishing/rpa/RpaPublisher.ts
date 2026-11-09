@@ -106,7 +106,7 @@ export class RpaPublisher implements Publisher {
         });
         if (r.status === 'dry-run') {
           keepOpen = true; // leave the filled composer for the user to inspect
-          return { status: 'dry-run' };
+          return { status: 'dry-run', note: post.topic ? (r.topicIssue ? `Topic "${post.topic}" not set: ${r.topicIssue}` : `Topic "${post.topic}" set`) : 'No topic chosen' };
         }
         if (r.status === 'failed') return { status: 'failed', reason: r.reason };
         if (r.status === 'clicked' && r.pending) return { status: 'published', note: 'Pending admin approval in the group' };
@@ -114,7 +114,7 @@ export class RpaPublisher implements Publisher {
         const found = post.replyTo
           ? await this.driver.send<{ found: boolean; url?: string }>(tabId, { cmd: 'findReply', targetUrl: post.replyTo, profileUrl: acc.profileUrl, fingerprint: post.fingerprint })
           : await this.confirm(acc, post.fingerprint);
-        if (found.found) return { status: 'published', url: found.url, ...(post.topic && r.status === 'clicked' && r.topicSet === false ? { note: `Topic "${post.topic}" could not be set (Threads UI)` } : {}) };
+        if (found.found) return { status: 'published', url: found.url, ...(post.topic && r.status === 'clicked' && r.topicSet === false ? { note: `Topic "${post.topic}" not set: ${r.topicIssue ?? 'Threads UI'}` } : {}) };
         return { status: 'unknown', reason: r.status === 'unknown' ? r.reason : 'Post not yet visible on the profile/page feed' };
       } catch (e) {
         // Before the publish command nothing can have been posted → failed.

@@ -25,7 +25,7 @@ export interface PublishInput {
   /** Threads topic / community tag; best effort */
   topic?: string;
 }
-export type EngineResult = { status: 'clicked'; pending?: boolean; topicSet?: boolean } | { status: 'dry-run' } | { status: 'unknown'; reason: string } | { status: 'failed'; reason: string };
+export type EngineResult = { status: 'clicked'; pending?: boolean; topicSet?: boolean; topicIssue?: string } | { status: 'dry-run'; topicIssue?: string } | { status: 'unknown'; reason: string } | { status: 'failed'; reason: string };
 
 const T = (o: EngineOpts, ms: number) => Math.min(ms, o.timeoutMs ?? ms);
 
@@ -149,8 +149,12 @@ export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o:
     };
   }
   let topicSet: boolean | undefined;
-  if (input.topic && cfg.topicField) topicSet = await setTopic(cfg, dialog, box, input.topic, o);
-  if (input.dryRun) return { status: 'dry-run' };
+  let topicIssue: string | undefined;
+  if (input.topic && cfg.topicField) {
+    topicIssue = (await setTopic(cfg, dialog, box, input.topic, o)) ?? undefined;
+    topicSet = !topicIssue;
+  }
+  if (input.dryRun) return { status: 'dry-run', topicIssue };
 
   await humanDelay(d, 800, 1600);
   const next = cfg.nextButton && findBySelectors(cfg.nextButton, dialog);
@@ -175,7 +179,7 @@ export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o:
     if (cfg.pendingNotice && (await waitFor(() => findBySelectors(cfg.pendingNotice), T(o, 4000), o.pollMs))) {
       return { status: 'clicked', pending: true };
     }
-    return { status: 'clicked', topicSet };
+    return { status: 'clicked', topicSet, topicIssue };
   } catch (e) {
     return { status: 'unknown', reason: `Error after clicking Post: ${(e as Error).message}` };
   }
@@ -217,23 +221,34 @@ export function findTopicField(dialog: Element): HTMLElement | null {
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-/** Fills the Threads "Community or topic" field. Best effort: returns false and moves on if the UI differs. */
-export async function setTopic(cfg: PlatformSelectors, dialog: Element, box: Element, topic: string, o: EngineOpts = {}): Promise<boolean> {
+/**
+ * Fills the Threads "Community or topic" field. Best effort: never blocks the post.
+ * Returns null on success, or a short reason (shown on the post) when the UI differs.
+ */
+export async function setTopic(cfg: PlatformSelectors, dialog: Element, box: Element, topic: string, o: EngineOpts = {}): Promise<string | null> {
   try {
     const field = findBySelectors(cfg.topicField, dialog) ?? findTopicField(dialog);
-    if (!field) return false;
+    if (!field) return 'topic field not found';
+    const isEditable = (el: Element | null): el is HTMLElement =>
+      !!el && el !== box && !box.contains(el) && ((el as HTMLElement).tagName === 'INPUT' || (el as HTMLElement).isContentEditable);
+    const before = new Set(Array.from(document.querySelectorAll('input, [contenteditable="true"]')));
     click(field);
     const editable = await waitFor(
       () => {
-        const a = document.activeElement as HTMLElement | null;
-        if (a && a !== box && (a.tagName === 'INPUT' || a.isContentEditable)) return a;
-        const f = field as HTMLElement;
-        return f.tagName === 'INPUT' || f.isContentEditable ? f : null;
+        const a = document.activeElement;
+        if (isEditable(a)) return a;
+        if (isEditable(field)) return field as HTMLElement;
+        // an input that appeared after the click (inline editor or popover search box)
+        const fresh = Array.from(document.querySelectorAll<HTMLElement>('input, [contenteditable="true"]')).find((el) => !before.has(el) && isEditable(el));
+        if (fresh) return fresh;
+        return Array.from(document.querySelectorAll<HTMLElement>('input, [contenteditable="true"]')).find(
+          (el) => isEditable(el) && TOPIC_RE.test(`${el.getAttribute('placeholder') ?? ''} ${el.getAttribute('aria-label') ?? ''} ${el.getAttribute('aria-placeholder') ?? ''}`),
+        );
       },
-      T(o, 3000),
+      T(o, 4000),
       o.pollMs,
     );
-    if (!editable) return false;
+    if (!editable) return 'topic input did not open';
     editable.focus();
     if (editable.tagName === 'INPUT') {
       const inp = editable as HTMLInputElement;
@@ -246,18 +261,26 @@ export async function setTopic(cfg: PlatformSelectors, dialog: Element, box: Ele
     const want = norm(topic);
     const option = await waitFor(
       () => {
-        const opts = (cfg.topicOption ?? []).flatMap((s) => [...document.querySelectorAll<HTMLElement>(s.css)]);
-        if (!opts.length) return null;
-        return opts.find((el) => norm(el.textContent ?? '').includes(want)) ?? opts[0];
+        const listed = (cfg.topicOption ?? []).flatMap((sel) => [...document.querySelectorAll<HTMLElement>(sel.css)]);
+        const hit = listed.find((el) => norm(el.textContent ?? '').includes(want)) ?? listed[0];
+        if (hit) return hit;
+        // suggestion rows rendered as plain clickable divs: exact topic text outside the composer box
+        const rows = Array.from(document.querySelectorAll<HTMLElement>('[role="button"], [role="menuitem"], [tabindex="0"]')).filter(
+          (el) => el !== editable && !el.contains(editable) && !box.contains(el) && norm(el.textContent ?? '').startsWith(want),
+        );
+        return rows.sort((a, b) => (a.textContent ?? '').length - (b.textContent ?? '').length)[0] ?? null;
       },
       T(o, 5000),
       o.pollMs,
     );
     if (option) click(option);
-    else editable.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    return true;
-  } catch {
-    return false;
+    else {
+      editable.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+      return 'no topic suggestion appeared (pressed Enter)';
+    }
+    return null;
+  } catch (e) {
+    return `topic error: ${(e as Error).message}`;
   }
 }
 
