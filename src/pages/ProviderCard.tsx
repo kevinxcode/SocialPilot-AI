@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckCircle2, Loader2, RefreshCw, XCircle } from 'lucide-react';
 import { Badge, Button, Card, Field, Input, Select, Switch } from '@/components/ui';
 import type { AIModel, ProviderConfig, ProviderId, ProviderStatus } from '@/types/models';
@@ -85,12 +85,10 @@ export function ProviderCard(p: ProviderCardProps) {
         </Field>
         {needsKey && (
           <Field label="API key (stored locally, never exported)">
-            <Input
-              type="password"
-              autoComplete="off"
-              placeholder={p.id === 'nvidia' ? 'nvapi-…' : 'sk-or-…'}
+            <KeyInput
               value={p.cfg.apiKey ?? ''}
-              onChange={(e) => p.onChange({ apiKey: e.target.value.trim() || undefined })}
+              placeholder={p.id === 'nvidia' ? 'nvapi-…' : 'sk-or-…'}
+              onSave={(v) => p.onChange({ apiKey: v || undefined })}
             />
           </Field>
         )}
@@ -152,5 +150,39 @@ export function ProviderCard(p: ProviderCardProps) {
         </div>
       )}
     </Card>
+  );
+}
+
+/**
+ * Local state while typing/pasting (settings are saved asynchronously, so a controlled input could drop a paste);
+ * saved on blur, Enter or the Save button.
+ */
+function KeyInput({ value, placeholder, onSave }: { value: string; placeholder: string; onSave: (v: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  const [show, setShow] = useState(false);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    const v = draft.replace(/\s+/g, '');
+    if (v !== value) onSave(v);
+  };
+  return (
+    <div className="flex gap-2">
+      <Input
+        type={show ? 'text' : 'password'}
+        autoComplete="off"
+        spellCheck={false}
+        placeholder={placeholder}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && commit()}
+      />
+      <Button variant="outline" size="sm" type="button" onClick={() => setShow((s) => !s)}>
+        {show ? 'Hide' : 'Show'}
+      </Button>
+      <Button size="sm" type="button" onClick={commit}>
+        Save
+      </Button>
+    </div>
   );
 }
