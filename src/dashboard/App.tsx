@@ -5,6 +5,7 @@ import { Sidebar, type PageId } from '@/layouts/Sidebar';
 import { useSettings, useT, useTheme } from '@/hooks/useSettings';
 import { seedIfEmpty } from '@/services/storage/db';
 import { PAGES } from './pages';
+import { LoginGate } from '@/components/LoginGate';
 
 function readHash(): PageId {
   const h = location.hash.replace('#/', '') as PageId;
@@ -33,6 +34,7 @@ export function App() {
 
   return (
     <ToastProvider>
+      <LoginGate mode="dashboard">
       <div className="flex min-h-screen">
         <Sidebar page={page} onNavigate={navigate} t={t} />
         <main className="min-w-0 flex-1">
@@ -50,6 +52,7 @@ export function App() {
           <div className="mx-auto max-w-6xl p-6">{render ? render(navigate) : <Empty>Not available.</Empty>}</div>
         </main>
       </div>
+      </LoginGate>
     </ToastProvider>
   );
 }

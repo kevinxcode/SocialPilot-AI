@@ -10,6 +10,7 @@ import { createDraft } from '@/services/publishing/posts';
 import { getActiveBrandId } from '@/pages/BrandKnowledge';
 import type { FbGroup, Platform } from '@/types/models';
 import { platformLabel } from '@/lib/platform';
+import { LoginGate } from '@/components/LoginGate';
 import { groupInstructions } from '@/services/content/groupPrompt';
 
 /** Enabled group that was posted to least recently. */
@@ -139,7 +140,9 @@ function PopupBody() {
 export function Popup() {
   return (
     <ToastProvider>
-      <PopupBody />
+      <LoginGate mode="popup">
+        <PopupBody />
+      </LoginGate>
     </ToastProvider>
   );
 }
