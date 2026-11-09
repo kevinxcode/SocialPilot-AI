@@ -7,6 +7,8 @@ import { ContentStudioPage } from '@/pages/ContentStudio';
 import { ResearchPage } from '@/pages/Research';
 import { MediaLibraryPage } from '@/pages/MediaLibrary';
 import { SocialAccountsPage } from '@/pages/SocialAccounts';
+import { ScheduledPostsPage } from '@/pages/ScheduledPosts';
+import { CalendarPage } from '@/pages/Calendar';
 
 type Render = (navigate: (p: PageId) => void) => ReactNode;
 
@@ -18,4 +20,6 @@ export const PAGES: Partial<Record<PageId, Render>> = {
   research: () => <ResearchPage />,
   media: () => <MediaLibraryPage />,
   accounts: () => <SocialAccountsPage />,
+  scheduled: () => <ScheduledPostsPage />,
+  calendar: () => <CalendarPage />,
 };
