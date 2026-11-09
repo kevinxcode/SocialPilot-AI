@@ -137,49 +137,70 @@ export class AIRouter {
       }
 
       tried = true;
-      const t0 = Date.now();
-      try {
-        const r = await this.create(p, cfg).chat(
-          { model: pick.model, messages: req.messages, temperature: req.temperature, maxTokens: req.maxTokens, signal: req.signal },
-          onToken,
-        );
-        const usage = r.usage ?? { in: 0, out: 0 };
-        await CostGuard.record({
-          id: uid(),
-          at: Date.now(),
-          providerId: p,
-          modelId: pick.model,
-          purpose: req.purpose,
-          inTokens: usage.in,
-          outTokens: usage.out,
-          costUsd: CostGuard.estimate(pick.info ?? { providerId: p, isFree: false }, usage),
-          ok: true,
-          latencyMs: Date.now() - t0,
-        });
-        await db.providers.put({ ...((await db.providers.get(p)) ?? { id: p }), lastSuccessAt: Date.now(), lastError: undefined });
-        return { text: r.text, providerId: p, modelId: pick.model };
-      } catch (e) {
-        if (req.signal?.aborted) throw e;
-        const reason = (e as Error).message;
-        attempts.push({ providerId: p, modelId: pick.model, outcome: 'failed', reason });
-        await CostGuard.record({
-          id: uid(),
-          at: Date.now(),
-          providerId: p,
-          modelId: pick.model,
-          purpose: req.purpose,
-          inTokens: 0,
-          outTokens: 0,
-          costUsd: 0,
-          ok: false,
-          latencyMs: Date.now() - t0,
-        });
-        await db.providers.put({ ...((await db.providers.get(p)) ?? { id: p }), lastError: reason });
-        if (s.router.mode === 'manual') break;
+      // Free models are often rate-limited upstream: try other FREE models of the same provider before moving on.
+      const candidates: { id: string; info?: AIModel }[] = [{ id: pick.model, info: pick.info }];
+      if (p !== 'ollama' && !isPaid(p, pick.info)) {
+        const alts = (await ModelRegistry.list(p))
+          .filter((m) => m.isFree && m.id !== pick.model && (!req.needsVision || m.vision))
+          .sort((a, b) => Number(b.id === 'openrouter/free') - Number(a.id === 'openrouter/free'));
+        candidates.push(...alts.slice(0, MAX_FREE_ALTERNATIVES).map((m) => ({ id: m.id, info: m })));
       }
+      for (const cand of candidates) {
+        const t0 = Date.now();
+        try {
+          const r = await this.create(p, cfg).chat(
+            { model: cand.id, messages: req.messages, temperature: req.temperature, maxTokens: req.maxTokens, signal: req.signal },
+            onToken,
+          );
+          const usage = r.usage ?? { in: 0, out: 0 };
+          await CostGuard.record({
+            id: uid(),
+            at: Date.now(),
+            providerId: p,
+            modelId: cand.id,
+            purpose: req.purpose,
+            inTokens: usage.in,
+            outTokens: usage.out,
+            costUsd: CostGuard.estimate(cand.info ?? { providerId: p, isFree: false }, usage),
+            ok: true,
+            latencyMs: Date.now() - t0,
+          });
+          await db.providers.put({ ...((await db.providers.get(p)) ?? { id: p }), lastSuccessAt: Date.now(), lastError: undefined });
+          return { text: r.text, providerId: p, modelId: cand.id };
+        } catch (e) {
+          if (req.signal?.aborted) throw e;
+          const reason = (e as Error).message;
+          attempts.push({ providerId: p, modelId: cand.id, outcome: 'failed', reason });
+          await CostGuard.record({
+            id: uid(),
+            at: Date.now(),
+            providerId: p,
+            modelId: cand.id,
+            purpose: req.purpose,
+            inTokens: 0,
+            outTokens: 0,
+            costUsd: 0,
+            ok: false,
+            latencyMs: Date.now() - t0,
+          });
+          await db.providers.put({ ...((await db.providers.get(p)) ?? { id: p }), lastError: reason });
+          if (!isRetryable(e)) break;
+        }
+      }
+      if (s.router.mode === 'manual') break;
     }
     throw new RouterError(tried ? 'ALL_FAILED' : capHit ? 'COST_CAP' : 'NO_ELIGIBLE', attempts);
   }
+}
+
+const MAX_FREE_ALTERNATIVES = 3;
+
+/** Rate limits, server errors, timeouts and empty replies are worth retrying on another model; auth errors are not. */
+function isRetryable(e: unknown): boolean {
+  const err = e as { status?: number; retryable?: boolean; message?: string };
+  if (err.status === 401 || err.status === 403) return false;
+  if (err.retryable === false) return false;
+  return true;
 }
 
 export const aiRouter = new AIRouter();
