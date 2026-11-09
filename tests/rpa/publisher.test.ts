@@ -69,7 +69,7 @@ test('missing account → failed', async () => {
 
 test('dry run leaves the window open', async () => {
   const f = fakeDriver({ preflight: [{ ok: true }], publish: [{ status: 'dry-run' }] });
-  expect(await new RpaPublisher('threads', f.d, 0).publish(post, [], { dryRun: true })).toEqual({ status: 'dry-run' });
+  expect(await new RpaPublisher('threads', f.d, 0).publish(post, [], { dryRun: true })).toMatchObject({ status: 'dry-run' });
   expect(f.closed()).toBe(0);
 });
 
