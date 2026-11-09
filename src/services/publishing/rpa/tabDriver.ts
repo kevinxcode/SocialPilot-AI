@@ -1,5 +1,5 @@
 /**
- * Service-worker side: owns a dedicated, unfocused automation window and talks to the RPA content script.
+ * Service-worker side: owns a dedicated background automation tab and talks to the RPA content script.
  * A normal (not minimized) window is used because background/minimized tabs throttle rendering.
  */
 import contentScript from '@/content/rpa.ts?script';
@@ -50,12 +50,13 @@ export const TabDriver = {
       const done = waitComplete(tabId!);
       await chrome.tabs.update(tabId!, { url });
       await done;
-      if (opts.focus) await chrome.windows.update(s.windowId!, { focused: true });
+      if (opts.focus) await chrome.tabs.update(tabId!, { active: true });
     } else {
-      const win = await chrome.windows.create({ url, focused: !!opts.focus, type: 'normal', width: 1100, height: 900 });
-      tabId = win.tabs?.[0]?.id;
-      if (tabId == null) throw new Error('Could not open automation window');
-      await chrome.storage.session.set({ [KEY]: { windowId: win.id, tabId } });
+      // A tab next to the user's tabs (not a popup window), opened in the background.
+      const t = await chrome.tabs.create({ url, active: !!opts.focus });
+      tabId = t.id;
+      if (tabId == null) throw new Error('Could not open automation tab');
+      await chrome.storage.session.set({ [KEY]: { windowId: t.windowId, tabId } });
       const tab = await chrome.tabs.get(tabId);
       if (tab.status !== 'complete') await waitComplete(tabId);
     }
@@ -86,7 +87,7 @@ export const TabDriver = {
   async close(): Promise<void> {
     const s = await getSession();
     await chrome.storage.session.remove(KEY);
-    if (s.windowId != null) await chrome.windows.remove(s.windowId).catch(() => undefined);
+    if (s.tabId != null) await chrome.tabs.remove(s.tabId).catch(() => undefined);
   },
 };
 

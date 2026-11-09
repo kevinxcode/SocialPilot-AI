@@ -102,7 +102,7 @@ function AccountCard({ platform }: { platform: Platform }) {
       <div className="mt-4 rounded-md border border-border p-3">
         <div className="mb-2 text-sm font-medium">Test publisher (dry run)</div>
         <p className="mb-2 text-xs text-muted-foreground">
-          Opens the composer in an automation window, types this text and stops before clicking Post. Nothing is published. The window stays
+          Opens the composer in a background tab, types this text and stops before clicking Post. Nothing is published. The tab stays
           open so you can inspect it, then close it yourself.
         </p>
         <Textarea rows={2} value={dryText} onChange={(e) => setDryText(e.target.value)} />
