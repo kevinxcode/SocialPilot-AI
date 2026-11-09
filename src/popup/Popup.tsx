@@ -8,7 +8,17 @@ import { db, seedIfEmpty } from '@/services/storage/db';
 import { generateVariations } from '@/services/content/generate';
 import { createDraft } from '@/services/publishing/posts';
 import { getActiveBrandId } from '@/pages/BrandKnowledge';
-import type { Platform } from '@/types/models';
+import type { FbGroup, Platform } from '@/types/models';
+import { platformLabel } from '@/lib/platform';
+import { groupInstructions } from '@/services/autopilot/runner';
+
+/** Enabled group that was posted to least recently. */
+async function pickGroup(): Promise<FbGroup | undefined> {
+  const groups = (await db.groups.toArray()).filter((g) => g.enabled);
+  const posts = await db.posts.where('platform').equals('fbgroup').toArray();
+  const last = (g: FbGroup) => Math.max(0, ...posts.filter((p) => p.groupId === g.id).map((p) => p.publishedAt ?? p.scheduledAt ?? p.createdAt));
+  return groups.sort((a, b) => last(a) - last(b))[0];
+}
 
 function PopupBody() {
   const { settings, update } = useSettings();
@@ -36,10 +46,15 @@ function PopupBody() {
   const generate = async () => {
     const brandId = await getActiveBrandId(settings?.activeBrandId);
     if (!brandId) return toast('No brand configured', 'err');
+    const group = platform === 'fbgroup' ? await pickGroup() : undefined;
+    if (platform === 'fbgroup' && !group) return toast('No enabled Facebook Group — enable one in Facebook Groups', 'err');
     setBusy(true);
     try {
       const v = await generateVariations(
-        { brandId, topic, objective: '', audience: '', language: settings?.language ?? 'id', platform, contentType: 'educational', tone: '', cta: '', hashtags: '' },
+        {
+          brandId, topic, objective: '', audience: '', language: settings?.language ?? 'id', platform, contentType: 'educational', tone: '', cta: '', hashtags: '',
+          extra: group ? groupInstructions(group) : undefined,
+        },
         1,
       );
       setOut(v[0]?.caption ?? '');
@@ -64,7 +79,7 @@ function PopupBody() {
         {next ? (
           <div>
             <span className="font-medium">{formatInTimeZone(next.scheduledAt ?? 0, tz, 'EEE dd MMM HH:mm')}</span> ·{' '}
-            {next.platform === 'threads' ? 'Threads' : 'Facebook'} {next.source === 'autopilot' && <Badge tone="info">Auto</Badge>}
+            {platformLabel(next.platform)} {next.source === 'autopilot' && <Badge tone="info">Auto</Badge>}
             <div className="truncate text-xs text-muted-foreground">{next.text}</div>
           </div>
         ) : (
@@ -84,7 +99,8 @@ function PopupBody() {
           <Textarea rows={2} placeholder="Quick generate — topic" value={topic} onChange={(e) => setTopic(e.target.value)} />
           <Select className="w-28" value={platform} onChange={(e) => setPlatform(e.target.value as Platform)} aria-label="Platform">
             <option value="threads">Threads</option>
-            <option value="facebook">Facebook</option>
+            <option value="facebook">Facebook Page</option>
+            <option value="fbgroup">Facebook Group</option>
           </Select>
         </div>
         <Button className="w-full" onClick={generate} disabled={busy}>
@@ -101,7 +117,9 @@ function PopupBody() {
                 size="sm"
                 variant="secondary"
                 onClick={async () => {
-                  await createDraft({ platform, text: out, brandId: await getActiveBrandId(settings?.activeBrandId) });
+                  const group = platform === 'fbgroup' ? await pickGroup() : undefined;
+                  if (platform === 'fbgroup' && !group) return toast('No enabled Facebook Group', 'err');
+                  await createDraft({ platform, groupId: group?.id, text: out, brandId: await getActiveBrandId(settings?.activeBrandId) });
                   toast('Draft saved — schedule it from the dashboard');
                 }}
               >
