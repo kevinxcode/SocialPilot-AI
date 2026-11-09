@@ -4,7 +4,8 @@ import { automaticComments } from '@/services/autopilot/comments';
 import { uid } from '@/lib/utils';
 import { formatInTimeZone } from 'date-fns-tz';
 import { maybeDailyTrending, researchTrending } from '@/services/content/trending';
-import { scrapeJoinedGroups, scrapeThreadsSearch } from '@/services/publishing/rpa/RpaPublisher';
+import { scrapeJoinedGroups, scrapeThreadsProfile, scrapeThreadsSearch } from '@/services/publishing/rpa/RpaPublisher';
+import { refreshEngagement } from '@/services/analytics/engagement';
 /**
  * Service worker: owns alarms, the publishing queue, autopilot planning and RPA publishers.
  */
@@ -71,6 +72,23 @@ Audience: ${b.audience}` }, now),
   );
 }
 
+const ENGAGEMENT_DAY_KEY = 'engagementLastRun';
+/** Once a day, inside the autopilot window, when the queue is idle: read own Threads profile counters. */
+async function dailyEngagement() {
+  const s = await getSettings();
+  if (s.autopilot.learnFromEngagement === false || !s.autopilot.enabled || s.autopilot.paused) return;
+  const now = Date.now();
+  const hm = formatInTimeZone(now, s.timezone, 'HH:mm');
+  if (hm < s.autopilot.windowStart || hm > s.autopilot.windowEnd) return;
+  if (await db.queue.where('runAt').belowOrEqual(now).count()) return; // publishing first
+  const day = formatInTimeZone(now, s.timezone, 'yyyy-MM-dd');
+  if ((await chrome.storage.local.get(ENGAGEMENT_DAY_KEY))[ENGAGEMENT_DAY_KEY] === day) return;
+  const acc = await db.accounts.where('platform').equals('threads').first();
+  if (!acc?.profileUrl) return;
+  await chrome.storage.local.set({ [ENGAGEMENT_DAY_KEY]: day });
+  await refreshEngagement(() => scrapeThreadsProfile(acc.profileUrl!), now);
+}
+
 let ticking: Promise<void> | null = null;
 let tickStartedAt = 0;
 /** A run that hangs (e.g. a stuck browser API call) must not block the queue forever. */
@@ -89,6 +107,7 @@ export function tick(): Promise<void> {
       await processDue(Date.now(), deps);
       await automaticComments().catch((e: Error) => log('warn', 'comments', e.message));
       await dailyTrending();
+      await dailyEngagement().catch((e: Error) => log('warn', 'analytics', `Engagement refresh failed: ${e.message}`));
     } catch (e) {
       await log('error', 'scheduler', (e as Error).message);
     } finally {

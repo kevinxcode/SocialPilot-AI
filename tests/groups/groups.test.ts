@@ -188,7 +188,7 @@ describe('autopilot — groups', () => {
     await db.queue.add(item);
     const router = {
       generate: vi.fn(async () => ({
-        text: JSON.stringify({ variations: [{ caption: 'Tips: pisahkan cucian per pelanggan dengan label.' }] }),
+        text: JSON.stringify({ variations: [{ caption: 'Tips: pisahkan cucian per pelanggan dengan label, supaya tidak ada yang tertukar dan kamu bisa kerja lebih tenang setiap hari.' }] }),
         providerId: 'ollama' as const,
         modelId: 'm',
       })),

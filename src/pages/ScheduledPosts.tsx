@@ -97,9 +97,13 @@ export function ScheduledPostsPage({ initialView = 'queue' }: { initialView?: Vi
                     <a href={p.url} target="_blank" rel="noreferrer" className="text-primary underline" onClick={(e) => e.stopPropagation()}>
                       open post
                     </a>
-                  ) : (
-                    (p.error ?? p.note ?? (p.nextRetryAt ? `retry ${fmt(p.nextRetryAt)}` : ''))
+                  ) : null}
+                  {p.engagement != null && (
+                    <span className="ml-2" title="Likes + replies + reposts, read from your Threads profile">
+                      ♥ {p.engagement}
+                    </span>
                   )}
+                  {!p.url && (p.error ?? p.note ?? (p.nextRetryAt ? `retry ${fmt(p.nextRetryAt)}` : ''))}
                 </td>
               </tr>
             ))}

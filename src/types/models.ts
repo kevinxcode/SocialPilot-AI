@@ -142,6 +142,9 @@ export interface Post {
   contentType?: string;
   providerId?: ProviderId;
   modelId?: string;
+  /** Threads only: likes + replies + reposts read from the profile (never estimated) */
+  engagement?: number;
+  engagementAt?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -208,6 +211,10 @@ export interface AutopilotSettings {
   dailyCapUsd: number;
   facebookOffsetMinutes: number;
   reviewWindowMinutes: number;
+  /** Threads: append the brand website with UTM tags to autopilot posts */
+  ctaLink?: boolean;
+  /** daily: read own Threads profile engagement and reuse the best angles */
+  learnFromEngagement?: boolean;
 }
 
 export interface Settings {

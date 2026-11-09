@@ -94,6 +94,16 @@ export function AutopilotSettings() {
             <Switch checked={a.attachMedia} onChange={(v) => set({ attachMedia: v })} label="Attach media" />
           </div>
         </Field>
+        <Field label="Threads: add website link with UTM (from Knowledge Base)">
+          <div className="flex h-9 items-center">
+            <Switch checked={a.ctaLink !== false} onChange={(v) => set({ ctaLink: v })} label="Add website link" />
+          </div>
+        </Field>
+        <Field label="Learn from engagement (reads your Threads profile daily)">
+          <div className="flex h-9 items-center">
+            <Switch checked={a.learnFromEngagement !== false} onChange={(v) => set({ learnFromEngagement: v })} label="Learn from engagement" />
+          </div>
+        </Field>
         <div className="md:col-span-2">
           <Field label="Autopilot model (free / local unless paid is allowed)">
             <Select

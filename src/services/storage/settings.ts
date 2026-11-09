@@ -38,6 +38,8 @@ export const DEFAULT_SETTINGS: Settings = {
     dailyCapUsd: 0.5,
     facebookOffsetMinutes: 30,
     reviewWindowMinutes: 0,
+    ctaLink: true,
+    learnFromEngagement: true,
   },
 };
 

@@ -181,6 +181,19 @@ export function scrapeThreadsSearch(queries: string[], perQuery = 8, driver: Dri
   });
 }
 
+/** Reads the brand's own Threads profile posts with their counters (read-only, never posts). */
+export function scrapeThreadsProfile(profileUrl: string, max = 25, driver: Driver = TabDriver as unknown as Driver): Promise<ScrapedPost[]> {
+  return exclusive(async () => {
+    try {
+      const tabId = await driver.open(profileUrl);
+      const r = await driver.send<{ posts: ScrapedPost[] }>(tabId, { cmd: 'scrapeFeed', platform: 'threads', max });
+      return r.posts ?? [];
+    } finally {
+      await driver.close();
+    }
+  });
+}
+
 /** Reads the list of Facebook groups the logged-in user has joined (read-only). */
 export function scrapeJoinedGroups(driver: Driver = TabDriver as unknown as Driver): Promise<{ name: string; url: string }[]> {
   return exclusive(async () => {

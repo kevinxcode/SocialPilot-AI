@@ -2,7 +2,10 @@ import { takeTrendingIdea } from '@/services/content/trending';
 import { db, log } from '@/services/storage/db';
 import { getSettings } from '@/services/storage/settings';
 import { generateVariations, type RouterLike } from '@/services/content/generate';
-import { validatePost } from '@/services/content/validate';
+import { LIMITS, validatePost } from '@/services/content/validate';
+import { qualityIssues } from '@/services/content/quality';
+import { recentAngleHints } from '@/services/analytics/engagement';
+import { appendLink, withUtm } from '@/lib/utm';
 import { contentTypeLabel } from '@/services/content/prompts';
 import { pickMedia } from '@/services/media/pick';
 import { createDraft } from '@/services/publishing/posts';
@@ -61,6 +64,8 @@ export async function runSlot(item: QueueItem, now: number, ctx: RunnerCtx): Pro
   const ideas = (await db.ideas.where('brandId').equals(brandId).toArray()).filter((i) => !i.kind.startsWith('trending'));
   const idea = (s.trendingResearch ? await takeTrendingIdea(brandId, now) : undefined) ?? (ideas.length ? ideas[hash(item.slotKey ?? item.id) % ideas.length] : undefined);
   const contentType = item.contentType ?? 'educational';
+  const brand = await db.brands.get(brandId);
+  const hints = a.learnFromEngagement !== false ? await recentAngleHints(now) : '';
   const input = {
     brandId,
     topic: idea ? `${idea.title}${idea.body ? ` — ${idea.body}` : ''}` : '',
@@ -70,12 +75,15 @@ export async function runSlot(item: QueueItem, now: number, ctx: RunnerCtx): Pro
     platform: item.platform,
     contentType,
     tone: '',
-    cta: '',
+    // Group posts stay non-salesy; elsewhere every post ends with the brand's CTA.
+    cta: group ? '' : (brand?.cta ?? '').trim(),
     hashtags: '',
     extra:
       [
         idea ? '' : `Pick a fresh, specific ${contentTypeLabel(contentType)} topic relevant to the audience of this brand.`,
         group ? groupInstructions(group) : '',
+        hints,
+        'Do not put any URL in the text.',
       ]
         .filter(Boolean)
         .join('\n') || undefined,
@@ -84,7 +92,8 @@ export async function runSlot(item: QueueItem, now: number, ctx: RunnerCtx): Pro
   let caption = '';
   let meta: { providerId?: ProviderId; modelId?: string } = {};
   let errors: string[] = [];
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // Up to 3 drafts: each rejected draft's problems are fed back so the next one fixes them.
+  for (let attempt = 0; attempt < 3; attempt++) {
     const extra =
       attempt === 0
         ? input.extra
@@ -96,11 +105,16 @@ export async function runSlot(item: QueueItem, now: number, ctx: RunnerCtx): Pro
     } catch (e) {
       return skip(item, `AI generation failed: ${(e as Error).message}`, ctx);
     }
+    if (item.platform === 'threads' && a.ctaLink !== false && brand?.website) {
+      const link = withUtm(brand.website, 'threads');
+      if (link) caption = appendLink(caption, link, LIMITS.threads);
+    }
     const v = await validatePost(caption, item.platform, brandId);
-    errors = v.errors;
-    if (v.ok) break;
+    errors = [...v.errors, ...qualityIssues(caption, a.language)];
+    if (!errors.length) break;
+    await log('info', 'autopilot', `${label(item.platform)} draft ${attempt + 1} rejected: ${errors.join('; ')}`);
   }
-  if (errors.length) return skip(item, `Generated text failed checks twice: ${errors.join('; ')}`, ctx);
+  if (errors.length) return skip(item, `Generated text failed checks 3 times: ${errors.join('; ')}`, ctx);
 
   const tags = [contentType, ...contentType.split('-'), ...(idea?.title.toLowerCase().split(/\s+/) ?? [])];
   const media = a.attachMedia ? await pickMedia(tags) : null;

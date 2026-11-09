@@ -65,7 +65,7 @@ const slot = (platform: 'threads' | 'facebook' = 'threads'): QueueItem => ({
 
 test('valid generation → autopilot post scheduled now, slot removed', async () => {
   await db.queue.add(slot());
-  const r = router([variation('Cucian tertukar bikin pusing? CuciQu Pro bantu catat setiap pesanan. #laundry')]);
+  const r = router([variation('Cucian tertukar bikin pusing? CuciQu Pro bantu catat setiap pesanan dengan rapi, jadi pelanggan tidak perlu menunggu lama dan kamu bisa fokus. #laundry')]);
   await runSlot(slot(), slot().runAt, ctx(r));
   const posts = await db.posts.toArray();
   expect(posts).toHaveLength(1);
@@ -75,11 +75,11 @@ test('valid generation → autopilot post scheduled now, slot removed', async ()
   expect((r.generate.mock.calls[0] as unknown[])[0]).toMatchObject({ purpose: 'autopilot' });
 });
 
-test('unknown price twice → slot skipped, nothing published or scheduled', async () => {
+test('unknown price on every draft → slot skipped, nothing published or scheduled', async () => {
   await db.queue.add(slot());
-  const r = router([variation('Promo cuma Rp 49.000 sebulan!')]);
+  const r = router([variation('Promo cuma Rp 49.000 sebulan untuk kamu yang ingin laundry lebih rapi dan tidak ada nota yang hilang lagi!')]);
   await runSlot(slot(), slot().runAt, ctx(r));
-  expect(r.generate).toHaveBeenCalledTimes(2);
+  expect(r.generate).toHaveBeenCalledTimes(3);
   expect(await db.posts.count()).toBe(0);
   expect(await db.queue.count()).toBe(0);
   expect(notes.join()).toMatch(/skipped/i);
@@ -87,7 +87,7 @@ test('unknown price twice → slot skipped, nothing published or scheduled', asy
 
 test('invalid first draft is regenerated once with the errors, then accepted', async () => {
   await db.queue.add(slot());
-  const r = router([variation('Diskon 50% hari ini!'), variation('Kelola laundry lebih rapi dengan CuciQu Pro.')]);
+  const r = router([variation('Diskon 50% hari ini!'), variation('Kelola laundry lebih rapi dengan CuciQu Pro, supaya semua pesanan tercatat dan kamu tidak perlu repot cari nota lagi.')]);
   await runSlot(slot(), slot().runAt, ctx(r));
   expect(r.generate).toHaveBeenCalledTimes(2);
   const second = (r.generate.mock.calls[1] as unknown[])[0] as { messages: { content: string }[] };
@@ -115,7 +115,7 @@ test('paused at slot time → slot dropped without generating', async () => {
 test('review window: post held, approve schedules it now, reject cancels', async () => {
   await updateSettings({ autopilot: { reviewWindowMinutes: 15 } });
   await db.queue.add(slot());
-  const r = router([variation('Kelola laundry lebih rapi dengan CuciQu Pro.')]);
+  const r = router([variation('Kelola laundry lebih rapi dengan CuciQu Pro, supaya semua pesanan tercatat dan kamu tidak perlu repot cari nota lagi.')]);
   await runSlot(slot(), slot().runAt, ctx(r));
   const p = (await db.posts.toArray())[0];
   expect(p.scheduledAt).toBe(slot().runAt + 15 * MIN);
@@ -151,4 +151,38 @@ test('planDay schedules N Facebook Group slots per day', async () => {
   const groups = plan.filter((q) => q.platform === 'fbgroup');
   expect(groups).toHaveLength(3);
   expect(new Set(groups.map((g) => g.slotKey)).size).toBe(3);
+});
+
+test('broken AI output (raw JSON / too short) is regenerated with the problem named', async () => {
+  await db.queue.add(slot());
+  const r = router([variation('Halo!'), variation('Kelola laundry lebih rapi dengan CuciQu Pro, supaya semua pesanan tercatat dan kamu tidak perlu repot cari nota lagi.')]);
+  await runSlot(slot(), slot().runAt, ctx(r));
+  expect(r.generate).toHaveBeenCalledTimes(2);
+  const second = (r.generate.mock.calls[1] as unknown[])[0] as { messages: { content: string }[] };
+  expect(second.messages[1].content).toMatch(/too short/);
+  expect(await db.posts.count()).toBe(1);
+});
+
+test('Threads autopilot post gets the brand website with UTM; the brand CTA is in the prompt', async () => {
+  const b = (await db.brands.toArray())[0];
+  await db.brands.update(b.id, { website: 'cuciqu.com', cta: 'Coba gratis 14 hari' });
+  await db.queue.add(slot());
+  const r = router([variation('Kelola laundry lebih rapi dengan CuciQu Pro, supaya semua pesanan tercatat dan kamu tidak perlu repot cari nota lagi.')]);
+  await runSlot(slot(), slot().runAt, ctx(r));
+  const p = (await db.posts.toArray())[0];
+  expect(p.text).toMatch(/https:\/\/cuciqu\.com\/\?utm_source=threads&utm_medium=social&utm_campaign=autopilot$/);
+  const prompt = ((r.generate.mock.calls[0] as unknown[])[0] as { messages: { content: string }[] }).messages[1].content;
+  expect(prompt).toMatch(/Coba gratis 14 hari/);
+});
+
+test('best-performing Threads posts are fed into the next prompt', async () => {
+  await db.posts.add({
+    id: 'old', platform: 'threads', accountId: 'a', text: 'Nota hilang? Ini cara simpel mencatat order', mediaIds: [], status: 'published', fingerprint: 'old',
+    source: 'autopilot', attempts: 1, createdAt: 0, updatedAt: 0, publishedAt: slot().runAt - 86_400_000, engagement: 42,
+  });
+  await db.queue.add(slot());
+  const r = router([variation('Kelola laundry lebih rapi dengan CuciQu Pro, supaya semua pesanan tercatat dan kamu tidak perlu repot cari nota lagi.')]);
+  await runSlot(slot(), slot().runAt, ctx(r));
+  const prompt = ((r.generate.mock.calls[0] as unknown[])[0] as { messages: { content: string }[] }).messages[1].content;
+  expect(prompt).toMatch(/engagement 42\] Nota hilang/);
 });
