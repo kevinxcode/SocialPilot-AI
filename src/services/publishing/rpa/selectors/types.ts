@@ -1,0 +1,35 @@
+/**
+ * A selector is a CSS query plus optional text/aria-label regex filters (case-insensitive).
+ * Arrays are tried in order — first match wins — so a Meta UI change is fixed by editing one config file.
+ */
+export interface Sel {
+  css: string;
+  /** regex source matched against the element's visible text (trimmed) */
+  text?: string;
+  /** regex source matched against aria-label of the element or a descendant svg */
+  label?: string;
+}
+
+export interface PlatformSelectors {
+  platform: 'threads' | 'facebook';
+  version: string;
+  /** any match ⇒ logged out */
+  loggedOut: Sel[];
+  /** identity proof on own profile/page (e.g. "Edit profile" button) */
+  ownProfileProof: Sel[];
+  /** prompt to switch into the Page (Facebook) */
+  switchToPage?: Sel[];
+  /** composer opener when acting as the account/page */
+  composerOpen: Sel[];
+  composerDialog: Sel[];
+  textbox: Sel[];
+  mediaButton?: Sel[];
+  fileInput: Sel[];
+  mediaPreview: Sel[];
+  nextButton?: Sel[];
+  postButton: Sel[];
+  /** containers holding one post each in the profile/page feed */
+  postContainer: string;
+  /** regex source for permalink hrefs */
+  permalink: string;
+}

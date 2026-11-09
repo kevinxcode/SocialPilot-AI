@@ -1,0 +1,125 @@
+import { db } from '@/services/storage/db';
+import type { Account, Platform, Post } from '@/types/models';
+import type { Publisher, PublishResult } from '../Publisher';
+import type { EngineResult, PreflightResult } from './engine';
+import { TabDriver, exclusive } from './tabDriver';
+
+const CONFIRM_WINDOW_MS = 90_000;
+
+async function blobToDataUrl(b: Blob): Promise<string> {
+  const buf = new Uint8Array(await new Response(b).arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  return `data:${b.type || 'application/octet-stream'};base64,${btoa(bin)}`;
+}
+
+export interface Driver {
+  open(url: string, opts?: { focus?: boolean }): Promise<number>;
+  send<T>(tabId: number, msg: unknown, timeoutMs?: number): Promise<T>;
+  close(): Promise<void>;
+}
+
+export class RpaPublisher implements Publisher {
+  constructor(
+    public readonly platform: Platform,
+    private driver: Driver = TabDriver as unknown as Driver,
+    private confirmWindowMs = CONFIRM_WINDOW_MS,
+  ) {}
+
+  private async account(): Promise<Account> {
+    const acc = await db.accounts.where('platform').equals(this.platform).first();
+    if (!acc?.profileUrl) throw new Error(`No ${this.platform === 'threads' ? 'Threads account' : 'Facebook Page'} configured in Social Accounts`);
+    return acc;
+  }
+
+  private async preflightOn(acc: Account): Promise<{ tabId: number; res: PreflightResult }> {
+    let tabId = await this.driver.open(acc.profileUrl);
+    let res = await this.driver.send<PreflightResult>(tabId, { cmd: 'preflight', platform: this.platform, account: { profileUrl: acc.profileUrl, pageName: acc.name } });
+    if (res.switched) {
+      tabId = await this.driver.open(acc.profileUrl);
+      res = await this.driver.send<PreflightResult>(tabId, { cmd: 'preflight', platform: this.platform, account: { profileUrl: acc.profileUrl, pageName: acc.name } });
+      if (res.switched) res = { ok: false, reason: 'Could not switch into the Facebook Page' };
+    }
+    return { tabId, res };
+  }
+
+  preflight(acc: Account): Promise<{ ok: boolean; reason?: string }> {
+    return exclusive(async () => {
+      try {
+        const { res } = await this.preflightOn(acc);
+        await db.accounts.update(acc.id, { lastCheckOk: res.ok, lastCheckAt: Date.now(), lastCheckMessage: res.reason ?? 'OK' });
+        return { ok: res.ok, reason: res.reason };
+      } catch (e) {
+        return { ok: false, reason: (e as Error).message };
+      } finally {
+        await this.driver.close();
+      }
+    });
+  }
+
+  publish(post: Post, media: Blob[], opts: { dryRun?: boolean } = {}): Promise<PublishResult> {
+    return exclusive(async () => {
+      let keepOpen = false;
+      let commandSent = false;
+      try {
+        const acc = await this.account();
+        const { tabId, res } = await this.preflightOn(acc);
+        if (!res.ok) return { status: 'failed', reason: res.reason ?? 'Preflight failed' };
+        const files = await Promise.all(
+          media.map(async (b, i) => ({ name: `media-${i + 1}.${(b.type.split('/')[1] ?? 'bin').replace('jpeg', 'jpg')}`, type: b.type, dataUrl: await blobToDataUrl(b) })),
+        );
+        commandSent = !opts.dryRun;
+        const r = await this.driver.send<EngineResult>(tabId, {
+          cmd: 'publish',
+          platform: this.platform,
+          input: { text: post.text, files, dryRun: !!opts.dryRun, pageName: acc.name },
+        });
+        if (r.status === 'dry-run') {
+          keepOpen = true; // leave the filled composer for the user to inspect
+          return { status: 'dry-run' };
+        }
+        if (r.status === 'failed') return { status: 'failed', reason: r.reason };
+        // clicked or unknown: confirm on the feed before claiming success
+        const found = await this.confirm(acc, post.fingerprint);
+        if (found.found) return { status: 'published', url: found.url };
+        return { status: 'unknown', reason: r.status === 'unknown' ? r.reason : 'Post not yet visible on the profile/page feed' };
+      } catch (e) {
+        // Before the publish command nothing can have been posted → failed.
+        // After it, the outcome is ambiguous → unknown, and the queue checks the feed before any retry.
+        const reason = (e as Error).message;
+        return commandSent ? { status: 'unknown', reason } : { status: 'failed', reason };
+      } finally {
+        if (!keepOpen) await this.driver.close();
+      }
+    });
+  }
+
+  private async confirm(acc: Account, fp: string): Promise<{ found: boolean; url?: string }> {
+    const end = Date.now() + this.confirmWindowMs;
+    do {
+      const tabId = await this.driver.open(acc.profileUrl);
+      const r = await this.driver.send<{ found: boolean; url?: string }>(tabId, { cmd: 'findExisting', platform: this.platform, fingerprint: fp });
+      if (r.found) return r;
+      if (Date.now() + 15_000 > end) break;
+      await new Promise((res) => setTimeout(res, 15_000));
+    } while (Date.now() < end);
+    return { found: false };
+  }
+
+  findExisting(post: Pick<Post, 'fingerprint' | 'platform'>): Promise<{ found: boolean; url?: string }> {
+    return exclusive(async () => {
+      try {
+        const acc = await this.account();
+        const tabId = await this.driver.open(acc.profileUrl);
+        return await this.driver.send<{ found: boolean; url?: string }>(tabId, { cmd: 'findExisting', platform: this.platform, fingerprint: post.fingerprint });
+      } finally {
+        await this.driver.close();
+      }
+    });
+  }
+}
+
+export const publishers: Record<Platform, Publisher> = {
+  threads: new RpaPublisher('threads'),
+  facebook: new RpaPublisher('facebook'),
+};
