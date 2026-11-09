@@ -28,12 +28,15 @@ export async function enabledTopics(): Promise<string[]> {
 }
 
 /** Picks a topic for a post with the AI (preferring the master list) and records it. */
-export async function topicForPost(post: Pick<Post, 'text'>, router: RouterLike): Promise<string | undefined> {
-  const preferred = await enabledTopics();
+export async function topicForPost(post: Pick<Post, 'text'>, router: RouterLike, now = Date.now()): Promise<string | undefined> {
+  // Variety: topics used in the last 20 h are not offered again (unless every topic was used).
+  const all = (await db.topics.toArray()).filter((t) => t.enabled).sort((a, b) => b.uses - a.uses);
+  const fresh = all.filter((t) => !t.lastUsedAt || now - t.lastUsedAt > 20 * 3600_000);
+  const preferred = (fresh.length ? fresh : all).map((t) => t.name);
   const t = await pickTopic(post.text, preferred, router);
   if (!t) return undefined;
   const known = preferred.some((p) => topicKey(p) === topicKey(t));
-  return recordTopic(t, known ? 'manual' : 'ai');
+  return recordTopic(t, known ? 'manual' : 'ai', true, now);
 }
 
 /** Asks the AI for topic ideas for the brand and adds new ones to the master list. Returns the added names. */

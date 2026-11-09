@@ -45,3 +45,13 @@ test('disabled topics are not offered but research skips existing ones', async (
   const added = await researchTopics('brand', router('1. Laundry\n2. Bisnis UMKM\n- Usaha Laundry'));
   expect(added).toEqual(['Bisnis UMKM', 'Usaha Laundry']);
 });
+
+test('topics used in the last 20 h are not offered again', async () => {
+  const seen: string[] = [];
+  const spy = { generate: async (req: { messages: { content: string }[] }) => (seen.push(req.messages[1].content), { text: 'x' }) as never };
+  await recordTopic('Bisnis Laundry', 'manual', true, 1000);
+  await recordTopic('UMKM', 'manual', false);
+  await topicForPost({ text: 'a' }, spy as never, 2000);
+  expect(seen[0]).toMatch(/UMKM/);
+  expect(seen[0]).not.toMatch(/Bisnis Laundry/);
+});
