@@ -1,4 +1,4 @@
-import { fromZonedTime } from 'date-fns-tz';
+import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
 import { db, log } from '@/services/storage/db';
 import { getSettings } from '@/services/storage/settings';
 import { markUsed } from '@/services/media/pick';
@@ -178,6 +178,12 @@ export async function processDue(now: number, deps: QueueDeps): Promise<void> {
         // Late autopilot slots are dropped (a fresh one comes tomorrow); late posts you wrote are still published,
         // spaced by the minimum gap, and their time moves forward.
         if (item.kind === 'slot' && (tooLate || superseded)) {
+          // Catch up instead of losing the post: move it to a free catch-up place (max 2 per platform per day).
+          const moved = await carryOver(item, now, settings);
+          if (moved) {
+            await log('info', 'autopilot', `${label(item.platform)} slot ${item.slotKey}: missed (Chrome closed or asleep) — moved to ${new Date(moved).toLocaleString()}`);
+            continue;
+          }
           const reason = tooLate
             ? 'Skipped: more than 2 h late (Chrome was closed or asleep at the scheduled time)'
             : 'Skipped: missed slot superseded by a later one (only the latest missed slot is posted)';
@@ -388,6 +394,49 @@ export async function recoverOnStartup(now: number): Promise<void> {
  * Scheduled/verifying posts whose queue item went missing (e.g. an interrupted run) would wait forever.
  * Re-queue them now; the gap and duplicate rules still apply.
  */
+/** Missed autopilot slots are carried over at most this many per platform per day (never doubles the cadence). */
+export const CATCH_UP_PER_DAY = 2;
+/** Older missed slots are dropped: the content would be stale and the backlog never ends. */
+export const CATCH_UP_MAX_AGE_MS = 3 * DAY_MS;
+
+/**
+ * Moves a missed autopilot slot to the first free catch-up place inside the autopilot window, today or on one of the
+ * next 3 days: places are spread evenly in the window (between the normal slots), max CATCH_UP_PER_DAY per platform
+ * per day. Returns the new run time, or null when the slot is too old / autopilot is off / no place is free.
+ */
+async function carryOver(item: QueueItem, now: number, s: Awaited<ReturnType<typeof getSettings>>): Promise<number | null> {
+  const a = s.autopilot;
+  const missedAt = item.missedAt ?? item.runAt;
+  if (!a.enabled || a.paused || !a.platforms[item.platform] || now - missedAt > CATCH_UP_MAX_AGE_MS) return null;
+  const toMin = (hhmm: string) => {
+    const [h, m] = hhmm.split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
+  const start = toMin(a.windowStart);
+  const end = Math.max(toMin(a.windowEnd), start + 1);
+  const taken = await db.queue.where('platform').equals(item.platform).toArray();
+  for (let d = 0; d < 4; d++) {
+    const day = formatInTimeZone(now + d * DAY_MS, s.timezone, 'yyyy-MM-dd');
+    const used = new Set(taken.filter((q) => q.slotKey?.startsWith(`${day}#c`)).map((q) => q.slotKey));
+    for (let k = 0; k < CATCH_UP_PER_DAY; k++) {
+      const slotKey = `${day}#c${k}`;
+      if (used.has(slotKey)) continue;
+      // Catch-up places sit at 1/3 and 2/3 of the window (+20 min so they don't collide with normal slots).
+      const minute = Math.round(start + ((k + 1) * (end - start)) / (CATCH_UP_PER_DAY + 1)) + 20;
+      let at = fromZonedTime(`${day}T${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}:00`, s.timezone).getTime();
+      if (at <= now) {
+        // Today's place already passed: run soon if we are still inside the window, else try the next place/day.
+        const endAt = fromZonedTime(`${day}T${a.windowEnd}:00`, s.timezone).getTime();
+        if (d > 0 || now + (k + 1) * 15 * 60_000 >= endAt) continue;
+        at = now + (k + 1) * 15 * 60_000;
+      }
+      await db.queue.update(item.id, { runAt: at, slotKey, missedAt, lockedUntil: undefined });
+      return at;
+    }
+  }
+  return null;
+}
+
 /**
  * Duplicate guard: a waiting post (scheduled / failed) whose text is EXACTLY the same (after normalising spaces,
  * case and punctuation) as another post on the same platform and target is cancelled and taken out of the queue.

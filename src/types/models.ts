@@ -167,6 +167,8 @@ export interface QueueItem {
   contentType?: string;
   runAt: number;
   lockedUntil?: number;
+  /** autopilot slot carried over after it was missed: the original time (drops after 3 days) */
+  missedAt?: number;
   /** "Publish now": skip the minimum-gap wait */
   immediate?: boolean;
 }
