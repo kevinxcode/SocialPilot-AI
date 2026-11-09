@@ -15,6 +15,12 @@ export interface ProviderCardProps {
   onRefresh: () => Promise<void>;
 }
 
+export function modelOptionLabel(m: AIModel): string {
+  const tag = m.providerId === 'ollama' ? '' : m.isFree ? '(free)' : m.providerId === 'nvidia' ? '(credits)' : '(paid)';
+  const name = tag && m.name.toLowerCase().includes(tag) ? m.name : [m.name, tag].filter(Boolean).join(' ');
+  return m.vision ? `${name} 👁` : name;
+}
+
 export function modelBadges(m: AIModel) {
   return (
     <>
@@ -94,9 +100,7 @@ export function ProviderCard(p: ProviderCardProps) {
               <option value="">— select —</option>
               {p.models.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.name}
-                  {m.providerId === 'ollama' ? '' : m.isFree ? ' (free)' : m.providerId === 'nvidia' ? ' (credits)' : ' (paid)'}
-                  {m.vision ? ' 👁' : ''}
+                  {modelOptionLabel(m)}
                 </option>
               ))}
             </Select>

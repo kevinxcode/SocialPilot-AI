@@ -146,3 +146,12 @@ test('Ollama test fails with the origin hint when POST endpoints return 403 (GET
   expect(r.ok).toBe(false);
   expect(r.message).toMatch(/OLLAMA_ORIGINS/);
 });
+
+test('OpenRouter test: key valid but selected model rate-limited → ok with a warning, not an error', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+    url.endsWith('/models') ? json({ data: [{ id: 'g/gemma:free', pricing: { prompt: '0', completion: '0' } }] }) : json({ error: { message: 'Provider returned error' } }, 429),
+  ));
+  const r = await new OpenRouterProvider({ enabled: true, apiKey: 'k', baseUrl: 'https://x', timeoutMs: 1000, model: 'g/gemma:free' }).test();
+  expect(r.ok).toBe(true);
+  expect(r.message).toMatch(/busy|rate.?limit/i);
+});

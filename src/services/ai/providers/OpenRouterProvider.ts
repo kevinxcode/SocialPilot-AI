@@ -1,5 +1,6 @@
 import type { AIModel, ProviderConfig } from '@/types/models';
 import type { AIProvider, ChatRequest, ChatResult, TestResult } from '../types';
+import type { ProviderError } from '../types';
 import { openAiChat, openAiModels } from './openaiCompat';
 
 interface ORModel {
@@ -40,7 +41,24 @@ export class OpenRouterProvider implements AIProvider {
     if (!this.cfg.apiKey) return { ok: false, message: 'API key missing', latencyMs: 0 };
     try {
       const models = await this.listModels();
-      if (this.cfg.model) await this.chat({ model: this.cfg.model, messages: [{ role: 'user', content: 'Reply with OK' }], maxTokens: 5 });
+      if (this.cfg.model) {
+        try {
+          await this.chat({ model: this.cfg.model, messages: [{ role: 'user', content: 'Reply with OK' }], maxTokens: 16 });
+        } catch (e) {
+          const err = e as ProviderError;
+          if (err.status === 429 || /429|rate.?limit/i.test(err.message)) {
+            return {
+              ok: true,
+              message: `Key OK, ${models.length} models — but "${this.cfg.model}" is busy upstream (rate limited). Try again later or pick another free model; the router falls back automatically.`,
+              latencyMs: Date.now() - t0,
+            };
+          }
+          if (/empty response/i.test(err.message)) {
+            return { ok: true, message: `Key OK, ${models.length} models (test reply was empty — model may need more tokens)`, latencyMs: Date.now() - t0 };
+          }
+          throw e;
+        }
+      }
       return { ok: true, message: `${models.length} models available`, latencyMs: Date.now() - t0 };
     } catch (e) {
       return { ok: false, message: (e as Error).message, latencyMs: Date.now() - t0 };
