@@ -32,7 +32,7 @@ export function spreadTimes(start: number, count: number, gapMs: number, tz: str
 export async function queueIdeas(
   ideaIds: string[],
   opts: { platform: Platform; router?: RouterLike; now?: number; onProgress?: (done: number) => void },
-): Promise<{ queued: number; failed: string[] }> {
+): Promise<{ queued: number; failed: string[]; queuedIds: string[] }> {
   const s = await getSettings();
   const now = opts.now ?? Date.now();
   const groups = opts.platform === 'fbgroup' ? (await db.groups.toArray()).filter((g) => g.enabled) : [];
@@ -49,6 +49,7 @@ export async function queueIdeas(
   const times = spreadTimes(start, ideaIds.length, gapMs, s.timezone, s.autopilot.windowStart, s.autopilot.windowEnd);
 
   let queued = 0;
+  const queuedIds: string[] = [];
   const failed: string[] = [];
   for (const id of ideaIds) {
     const idea = await db.ideas.get(id);
@@ -81,11 +82,12 @@ export async function queueIdeas(
       const post = await createDraft({ platform: opts.platform, text, brandId, title: idea.title, contentType: 'educational', groupId: group?.id });
       await schedulePost(post.id, new Date(times[queued]));
       queued++;
+      queuedIds.push(id);
       opts.onProgress?.(queued);
     } catch (e) {
       failed.push(`${idea.title}: ${(e as Error).message}`);
     }
   }
   await log('info', 'research', `Queued ${queued} posts from ideas${failed.length ? `, ${failed.length} failed` : ''}`);
-  return { queued, failed };
+  return { queued, failed, queuedIds };
 }

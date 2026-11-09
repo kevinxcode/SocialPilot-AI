@@ -58,7 +58,8 @@ export function ResearchPage() {
     useLiveQuery(() => db.ideas.orderBy("createdAt").reverse().toArray(), []) ??
     [];
   const [sel, setSel] = useState<Set<string>>(new Set());
-  const [qPlatform, setQPlatform] = useState<Platform>("threads");
+  const [qPlatforms, setQPlatforms] = useState<Set<Platform>>(new Set<Platform>(["threads"]));
+  const [removeAfter, setRemoveAfter] = useState(true);
   const [queuing, setQueuing] = useState<number | null>(null);
   const allChecked = ideas.length > 0 && ideas.every((i) => sel.has(i.id));
   const toggle = (id: string) =>
@@ -71,21 +72,34 @@ export function ResearchPage() {
   const addToQueue = async () => {
     const ids = ideas.filter((i) => sel.has(i.id)).map((i) => i.id);
     if (!ids.length) return;
+    const platforms = [...qPlatforms];
+    if (!platforms.length) return toast("Pick at least one platform", "err");
     if (
       !confirm(
-        `Generate and schedule ${ids.length} ${qPlatform} posts (spaced by the minimum gap, inside the autopilot window)?`,
+        `Generate and schedule ${ids.length * platforms.length} posts (${ids.length} ideas × ${platforms.join(", ")}), spaced by the minimum gap inside the autopilot window?`,
       )
     )
       return;
     setQueuing(0);
     try {
-      const r = await queueIdeas(ids, {
-        platform: qPlatform,
-        onProgress: setQueuing,
-      });
+      let queued = 0;
+      const failed: string[] = [];
+      const done = new Set<string>();
+      for (const platform of platforms) {
+        try {
+          const r = await queueIdeas(ids, { platform, onProgress: (n) => setQueuing(queued + n) });
+          queued += r.queued;
+          failed.push(...r.failed.map((f) => `${platform}: ${f}`));
+          r.queuedIds.forEach((x) => done.add(x));
+        } catch (e) {
+          failed.push(`${platform}: ${(e as Error).message}`);
+        }
+      }
+      // Processed ideas leave the list; failed ones stay so you can retry.
+      if (removeAfter && done.size) await db.ideas.bulkDelete([...done]);
       toast(
-        `Scheduled ${r.queued} posts${r.failed.length ? ` · ${r.failed.length} failed: ${r.failed[0]}` : ""}`,
-        r.failed.length && !r.queued ? "err" : undefined,
+        `Scheduled ${queued} posts${removeAfter && done.size ? ` · ${done.size} ideas removed` : ""}${failed.length ? ` · ${failed.length} failed: ${failed[0]}` : ""}`,
+        failed.length && !queued ? "err" : undefined,
       );
       setSel(new Set());
     } finally {
@@ -268,23 +282,44 @@ Source: ${url}` : "";
               />
               Select all ({sel.size})
             </label>
-            <Select
-              value={qPlatform}
-              onChange={(e) => setQPlatform(e.target.value as Platform)}
-              aria-label="Queue platform"
-            >
-              <option value="threads">Threads</option>
-              <option value="facebook">Facebook Page</option>
-              <option value="fbgroup">Facebook Groups (rotating)</option>
-            </Select>
+            <div className="flex flex-wrap items-center gap-3 rounded-md border border-border px-3 py-1.5">
+              {(
+                [
+                  ["threads", "Threads"],
+                  ["facebook", "Facebook Page"],
+                  ["fbgroup", "Facebook Groups"],
+                ] as [Platform, string][]
+              ).map(([p, label]) => (
+                <label key={p} className="flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={qPlatforms.has(p)}
+                    onChange={() =>
+                      setQPlatforms((s) => {
+                        const n = new Set(s);
+                        if (n.has(p)) n.delete(p);
+                        else n.add(p);
+                        return n;
+                      })
+                    }
+                    aria-label={`Queue to ${label}`}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <input type="checkbox" checked={removeAfter} onChange={() => setRemoveAfter((v) => !v)} aria-label="Remove ideas after queuing" />
+              Remove from saved ideas after queuing
+            </label>
             <Button
               disabled={!sel.size || queuing !== null}
               onClick={addToQueue}
             >
               {queuing !== null && <Loader2 className="h-4 w-4 animate-spin" />}
               {queuing !== null
-                ? `Generating… ${queuing}/${sel.size}`
-                : `Add to queue (${sel.size})`}
+                ? `Generating… ${queuing}/${sel.size * qPlatforms.size}`
+                : `Add to queue (${sel.size * qPlatforms.size})`}
             </Button>
           </div>
         )}
