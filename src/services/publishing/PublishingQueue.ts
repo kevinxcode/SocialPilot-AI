@@ -117,14 +117,14 @@ async function tryAnotherGroup(item: QueueItem, post: Post, reason: string): Pro
   const since = Date.now() - 24 * 3600_000;
   const recent = new Set(
     (await db.posts.where('platform').equals('fbgroup').toArray())
-      .filter((p) => p.id !== post.id && ((p.status === 'published' && (p.publishedAt ?? 0) > since) || p.status === 'scheduled'))
+      .filter((p) => p.id !== post.id && ((p.status === 'published' && (p.publishedAt ?? 0) > since) || ['scheduled', 'processing', 'verifying'].includes(p.status)))
       .map((p) => p.groupId),
   );
   const next = (await db.groups.toArray()).find((g) => g.enabled && !tried.includes(g.id) && !recent.has(g.id));
   if (!next) return false;
   await finish(item.id);
   await schedulePost(post.id, new Date());
-  await db.posts.update(post.id, { groupId: next.id, groupsTried: tried, error: `Moved from another group after: ${reason}`.slice(0, 300) });
+  await db.posts.update(post.id, { groupId: next.id, groupsTried: tried, error: undefined, note: `Moved from another group after: ${reason}`.slice(0, 300) });
   await log('warn', 'groups', `Group post failed ${MAX_ATTEMPTS}× (${reason}) — moved to “${next.name}”`);
   return true;
 }

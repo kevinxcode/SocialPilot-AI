@@ -6,6 +6,8 @@ import { LIMITS, validatePost } from '@/services/content/validate';
 import { qualityIssues } from '@/services/content/quality';
 import { recentAngleHints } from '@/services/analytics/engagement';
 import { appendLink, withUtm } from '@/lib/utm';
+import { groupInstructions } from '@/services/content/groupPrompt';
+export { groupInstructions };
 import { contentTypeLabel } from '@/services/content/prompts';
 import { pickMedia } from '@/services/media/pick';
 import { createDraft } from '@/services/publishing/posts';
@@ -146,15 +148,6 @@ export async function runSlot(item: QueueItem, now: number, ctx: RunnerCtx): Pro
   ctx.onScheduled?.();
 }
 
-export function groupInstructions(g: FbGroup): string {
-  return [
-    `This post goes to the Facebook Group "${g.name}". Write for the community: helpful and educational, not a sales pitch.`,
-    'Invite discussion (end with a question). Mention the brand at most once, softly.',
-    g.rules.trim() ? `Group rules you MUST follow: ${g.rules.trim()}` : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
-}
 
 /** Enabled group with the oldest last post, excluding groups posted to (or scheduled) in the last 24 h. */
 async function pickGroup(now: number): Promise<FbGroup | undefined> {

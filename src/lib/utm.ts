@@ -17,7 +17,14 @@ export function withUtm(url: string, source: Platform | string, campaign = 'auto
 
 /** Appends the link on its own paragraph unless it is already there or the post would exceed `limit` characters. */
 export function appendLink(text: string, url: string, limit: number): string {
-  if (text.includes(url)) return text;
+  // Skip when the site is already mentioned in any form (bare domain, other params) — never two links.
+  let host = '';
+  try {
+    host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+  } catch {
+    /* invalid url: compare as text */
+  }
+  if (text.includes(url) || (host && text.toLowerCase().includes(host))) return text;
   const next = `${text.trimEnd()}\n\n${url}`;
   return [...next].length <= limit ? next : text;
 }

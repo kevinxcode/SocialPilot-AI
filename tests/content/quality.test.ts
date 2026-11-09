@@ -70,3 +70,21 @@ test('angle hints list the best posts, never zero-engagement ones', () => {
   expect(hints).not.toMatch(/Zero/);
   expect(angleHints([post('3', 'Zero', { engagement: 0 })])).toBe('');
 });
+
+test('review fixes: labels in brackets and short punchy posts are allowed', () => {
+  expect(qualityIssues('[Tips] Pisahkan cucian putih dan berwarna supaya tidak luntur ya', 'id')).toEqual([]);
+  expect(qualityIssues('Kamu tim setrika atau tim lipat? Jawab di komentar 👇', 'id')).toEqual([]);
+  expect(qualityIssues('Halo [Nama], ini promo untuk kamu yang ada di sini', 'id').join()).toMatch(/placeholder/);
+});
+
+test('review fixes: no second link when the site is already in the text', () => {
+  const url = 'https://cuciqu.com/?utm_source=threads';
+  expect(appendLink('Cek di cuciqu.com ya', url, 500)).toBe('Cek di cuciqu.com ya');
+  expect(appendLink('Cek di https://www.cuciqu.com/harga', url, 500)).toBe('Cek di https://www.cuciqu.com/harga');
+});
+
+test('review fixes: unreadable counters are never stored as 0; hints carry no URLs', () => {
+  const p = post('1', 'Nota hilang bikin pusing pelanggan ya');
+  expect(matchEngagement([p], [{ text: 'Nota hilang bikin pusing pelanggan ya', engagement: undefined }])).toEqual([]);
+  expect(angleHints([post('2', 'Best post https://cuciqu.com/?utm_source=threads', { engagement: 5 })])).not.toMatch(/https?:/);
+});

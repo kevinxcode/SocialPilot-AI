@@ -290,8 +290,8 @@ export async function setTopic(cfg: PlatformSelectors, dialog: Element, box: Ele
 export interface ScrapedPost {
   text: string;
   url?: string;
-  /** likes + replies + reposts parsed from the counters, best effort */
-  engagement: number;
+  /** likes + replies + reposts parsed from the counters; undefined when none could be read */
+  engagement?: number;
 }
 
 /** Parses "1,2K" / "3.4rb" / "15" into a number. */
@@ -319,13 +319,15 @@ export async function runScrapeFeed(cfg: PlatformSelectors, max: number, o: Engi
     if (text.length < 30 || seen.has(text)) continue;
     seen.add(text);
     const a = Array.from(c.querySelectorAll<HTMLAnchorElement>('a[href]')).find((x) => re.test(x.getAttribute('href') ?? ''));
-    const engagement = Array.from(c.querySelectorAll('[role="button"] span, button span'))
-      .map((el) => parseCount(el.textContent ?? ''))
-      .reduce((s, n) => s + n, 0);
+    // Only this post's own counters (not a quoted/nested post); undefined when no counter could be read.
+    const counts = Array.from(c.querySelectorAll('[role="button"] span, button span'))
+      .filter((el) => el.closest(cfg.postContainer) === c && /^\s*[\d.,]+\s*(k|rb|jt|m)?\s*$/i.test(el.textContent ?? ''))
+      .map((el) => parseCount(el.textContent ?? ''));
+    const engagement = counts.length ? counts.reduce((s, n) => s + n, 0) : undefined;
     posts.push({ text: text.slice(0, 600), url: a ? new URL(a.getAttribute('href')!, location.origin).toString() : undefined, engagement });
     if (posts.length >= max) break;
   }
-  return { posts: posts.sort((x, y) => y.engagement - x.engagement) };
+  return { posts: posts.sort((x, y) => (y.engagement ?? 0) - (x.engagement ?? 0)) };
 }
 
 /** Strips activity suffixes Facebook glues to the name ("…Last active 3 days ago"). */

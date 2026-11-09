@@ -44,7 +44,7 @@ export async function researchTrending(
   const results = await deps.scrape(queries);
   const top = results
     .flatMap((r) => r.posts.map((p) => ({ ...p, query: r.query })))
-    .sort((a, b) => b.engagement - a.engagement)
+    .sort((a, b) => (b.engagement ?? 0) - (a.engagement ?? 0))
     .slice(0, 15);
   if (!top.length) throw new Error('No Threads posts found for the research topics (logged out or search UI changed?)');
 
@@ -61,7 +61,7 @@ export async function researchTrending(
       {
         role: 'user',
         content: `Brand: ${brand.name}\n${brand.summary.slice(0, 1200)}\n\nTrending posts (most engaged first):\n${top
-          .map((p, i) => `${i + 1}. [${p.query}, engagement ${p.engagement}] ${p.text.slice(0, 280)}`)
+          .map((p, i) => `${i + 1}. [${p.query}, engagement ${p.engagement ?? "?"}] ${p.text.slice(0, 280)}`)
           .join('\n')}`,
       },
     ],

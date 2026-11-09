@@ -26,6 +26,7 @@ export function matchEngagement(posts: Post[], scraped: ScrapedPost[]): { id: st
     const s = byUrl ?? (head.length >= 15 ? scraped.find((x) => !used.has(x) && norm(x.text).includes(head)) : undefined);
     if (!s) continue;
     used.add(s);
+    if (s.engagement == null) continue; // counters not readable: unknown, never store a made-up 0
     out.push({ id: p.id, engagement: s.engagement });
   }
   return out;
@@ -40,7 +41,7 @@ export function angleHints(posts: Post[], n = 3): string {
   if (!top.length) return '';
   return [
     'Your recent posts that got the most engagement (reuse their angle, format and hook style — never copy the text):',
-    ...top.map((p, i) => `${i + 1}. [${p.contentType ?? 'post'}, engagement ${p.engagement}] ${p.text.replace(/\s+/g, ' ').slice(0, 200)}`),
+    ...top.map((p, i) => `${i + 1}. [${p.contentType ?? 'post'}, engagement ${p.engagement}] ${p.text.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 200)}`),
   ].join('\n');
 }
 

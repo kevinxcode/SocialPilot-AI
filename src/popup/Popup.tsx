@@ -10,7 +10,7 @@ import { createDraft } from '@/services/publishing/posts';
 import { getActiveBrandId } from '@/pages/BrandKnowledge';
 import type { FbGroup, Platform } from '@/types/models';
 import { platformLabel } from '@/lib/platform';
-import { groupInstructions } from '@/services/autopilot/runner';
+import { groupInstructions } from '@/services/content/groupPrompt';
 
 /** Enabled group that was posted to least recently. */
 async function pickGroup(): Promise<FbGroup | undefined> {
@@ -39,6 +39,7 @@ function PopupBody() {
   const [platform, setPlatform] = useState<Platform>('threads');
   const [out, setOut] = useState('');
   const [busy, setBusy] = useState(false);
+  const [genGroup, setGenGroup] = useState<FbGroup | undefined>();
   useEffect(() => {
     void seedIfEmpty();
   }, []);
@@ -48,6 +49,7 @@ function PopupBody() {
     if (!brandId) return toast('No brand configured', 'err');
     const group = platform === 'fbgroup' ? await pickGroup() : undefined;
     if (platform === 'fbgroup' && !group) return toast('No enabled Facebook Group — enable one in Facebook Groups', 'err');
+    setGenGroup(group);
     setBusy(true);
     try {
       const v = await generateVariations(
@@ -117,8 +119,9 @@ function PopupBody() {
                 size="sm"
                 variant="secondary"
                 onClick={async () => {
-                  const group = platform === 'fbgroup' ? await pickGroup() : undefined;
-                  if (platform === 'fbgroup' && !group) return toast('No enabled Facebook Group', 'err');
+                  // Save to the same group the text was written for.
+                  const group = platform === 'fbgroup' ? genGroup : undefined;
+                  if (platform === 'fbgroup' && !group) return toast('Generate the group post again', 'err');
                   await createDraft({ platform, groupId: group?.id, text: out, brandId: await getActiveBrandId(settings?.activeBrandId) });
                   toast('Draft saved — schedule it from the dashboard');
                 }}
