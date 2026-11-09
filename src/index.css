@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 40%;
+  --primary: 199 89% 40%;
+  --primary-foreground: 0 0% 100%;
+  --destructive: 0 72% 50%;
+  --border: 214 32% 88%;
+}
+.dark {
+  --background: 222 47% 8%;
+  --foreground: 210 40% 96%;
+  --card: 222 40% 11%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 65%;
+  --primary: 199 89% 55%;
+  --primary-foreground: 222 47% 8%;
+  --destructive: 0 63% 45%;
+  --border: 217 33% 22%;
+}
+body {
+  @apply bg-background text-foreground antialiased;
+  font-family: Inter, system-ui, sans-serif;
+}
