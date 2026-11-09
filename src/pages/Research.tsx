@@ -131,6 +131,15 @@ export function ResearchPage() {
       toast((e as Error).message, "err");
     }
   };
+  const saveAll = async () => {
+    const have = new Set(ideas.map((i) => i.title.trim().toLowerCase()));
+    const fresh = results.filter((r) => !have.has(r.title.trim().toLowerCase()));
+    const ref = kind === "competitor" && url ? `
+
+Source: ${url}` : "";
+    await db.ideas.bulkAdd(fresh.map((r, i) => ({ id: uid(), brandId, title: r.title, body: r.body + ref, kind, createdAt: Date.now() + i })));
+    toast(`Saved ${fresh.length} ideas${results.length - fresh.length ? ` (${results.length - fresh.length} already saved)` : ""}`);
+  };
   const save = async (r: { title: string; body: string }) => {
     const ref = kind === "competitor" && url ? `\n\nSource: ${url}` : "";
     await db.ideas.add({
@@ -214,6 +223,14 @@ export function ResearchPage() {
         </Button>
       </Card>
 
+      {results.length > 0 && (
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">{results.length} results</span>
+          <Button onClick={saveAll}>
+            <BookmarkPlus className="h-4 w-4" /> Save all ({results.length})
+          </Button>
+        </div>
+      )}
       {results.length > 0 && (
         <div className="grid gap-3 md:grid-cols-2">
           {results.map((r, i) => (
