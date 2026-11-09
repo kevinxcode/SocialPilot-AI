@@ -4,7 +4,7 @@ This is an honest record of what has been checked and how. "Not verified" means 
 
 ## Automated (`npm test`)
 
-The suite has 102 tests in Vitest, run against fake-indexeddb and jsdom. It covers:
+The suite has 111 tests in Vitest, run against fake-indexeddb and jsdom. It covers:
 
 - **Storage:** seeding, export and import round-trips, invalid-import rollback, settings defaults.
 - **AI providers:** model parsing; SSE and NDJSON streaming; Ollama errors (not running, 403 CORS, model missing); `think:false`; filtering out embedding models; HTTP-200 error bodies; timeouts; key redaction.
@@ -17,7 +17,7 @@ The suite has 102 tests in Vitest, run against fake-indexeddb and jsdom. It cove
 - **Autopilot:** 2 posts/day gives 11:30 and 16:30 WIB for Threads, with Facebook 30 minutes later; pausing plans nothing; planning is idempotent and never creates past slots; claim check fails twice → skip; regenerate once; paid model refused → skip; review window approve/reject; missed slots.
 - **Analytics and UI:** stats come only from our own records; the provider card test button; account URL validation.
 
-`npm run typecheck`, `npm run lint` and `npm run build` all pass.
+`npm run typecheck`, `npm run lint` and `npm run build` all pass. A whole-branch review found two double-post paths, a lock that was too short, and a way past the daily cost cap; each was fixed with a test that failed first.
 
 ## Live checks
 
