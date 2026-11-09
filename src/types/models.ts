@@ -185,6 +185,8 @@ export interface ProviderConfig {
   baseUrl: string;
   model?: string;
   timeoutMs: number;
+  /** NVIDIA: the developer tier is free (rate-limited); treat its models as free */
+  freeTier?: boolean;
 }
 
 export interface AutopilotSettings {

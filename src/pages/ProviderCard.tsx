@@ -142,7 +142,15 @@ export function ProviderCard(p: ProviderCardProps) {
           <code>OLLAMA_ORIGINS=chrome-extension://*</code>.
         </p>
       )}
-      {p.id === 'nvidia' && <p className="mt-2 text-xs text-muted-foreground">NVIDIA API Catalog uses credits; models are treated as paid.</p>}
+      {p.id === 'nvidia' && (
+        <div className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
+          <Switch checked={!!p.cfg.freeTier} onChange={(v) => p.onChange({ freeTier: v })} label="NVIDIA free developer tier" />
+          <span>
+            My NVIDIA account is the free developer tier (no billing). Treat its models as <b>free</b> so “only free” and Autopilot can use them.
+            Click ↻ refresh models after switching. Leave off if your account has paid billing.
+          </span>
+        </div>
+      )}
     </Card>
   );
 }

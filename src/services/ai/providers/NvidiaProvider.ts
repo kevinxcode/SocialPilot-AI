@@ -4,7 +4,7 @@ import { openAiChat, openAiModels } from './openaiCompat';
 
 const VISION_HINT = /(vision|vila|vlm|llava|neva|kosmos|fuyu|paligemma|phi-3.*vision|llama-3\.2-\d+b-vision|nemotron.*vl)/i;
 
-/** NVIDIA API Catalog (integrate.api.nvidia.com). Credit-based → never "free". */
+/** NVIDIA API Catalog (integrate.api.nvidia.com). Paid unless the user marks the account as free developer tier. */
 export class NvidiaProvider implements AIProvider {
   readonly id = 'nvidia' as const;
   constructor(private cfg: ProviderConfig) {}
@@ -18,7 +18,7 @@ export class NvidiaProvider implements AIProvider {
       id: m.id,
       providerId: 'nvidia',
       name: m.id,
-      isFree: false,
+      isFree: !!this.cfg.freeTier,
       vision: VISION_HINT.test(m.id),
     }));
   }
