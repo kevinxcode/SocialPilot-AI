@@ -244,3 +244,14 @@ test('[review#6] lock is refreshed right before publishing', async () => {
   await processDue(t, deps(pub));
   expect(lockAtPublish).toBeGreaterThanOrEqual(t + 9 * MIN);
 });
+
+test('identical text waits while an earlier copy is still verifying (no duplicate on the feed)', async () => {
+  await addPost('orig', { status: 'verifying', attempts: 1, fingerprint: 'sama persis' });
+  await addPost('copy', { fingerprint: 'sama persis' });
+  await schedulePost('copy', new Date(T0));
+  const pub = fakePublisher([{ status: 'published' }]);
+  await processDue(T0, deps(pub));
+  expect(pub.calls).toBe(0);
+  expect((await db.posts.get('copy'))?.status).toBe('scheduled');
+  expect((await db.queue.where('postId').equals('copy').first())!.runAt).toBeGreaterThan(T0);
+});

@@ -169,6 +169,18 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     return;
   }
 
+  // An identical post whose outcome is still unclear may already be live: wait for it to resolve.
+  const pendingTwin = await db.posts
+    .where('fingerprint')
+    .equals(post.fingerprint)
+    .filter((p) => p.id !== post.id && p.platform === post.platform && (p.status === 'verifying' || p.status === 'processing'))
+    .first();
+  if (pendingTwin) {
+    await release(item.id, now + 5 * 60_000);
+    await log('info', 'queue', `${label(post.platform)}: identical post is still being verified — waiting`);
+    return;
+  }
+
   // Dedupe against recently published identical content.
   const dup = await db.posts
     .where('fingerprint')
