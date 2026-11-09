@@ -6,6 +6,8 @@ import { processDue, recoverOnStartup, schedulePost, type QueueDeps } from '@/se
 import { publishers } from '@/services/publishing/rpa/RpaPublisher';
 import { fingerprint } from '@/services/publishing/fingerprint';
 import { autopilotHooks } from './autopilotHooks';
+import { syncOllamaOriginRule } from './ollamaOrigin';
+import { getSettings } from '@/services/storage/settings';
 import type { SwRequest, SwResponse } from './messages';
 import type { Post } from '@/types/models';
 
@@ -59,6 +61,7 @@ export function tick(): Promise<void> {
 
 async function setup(startup: boolean) {
   await seedIfEmpty();
+  await syncOllamaOriginRule((await getSettings()).providers.ollama.baseUrl).catch((e: Error) => log('warn', 'ollama', e.message));
   if (startup) await recoverOnStartup(Date.now());
   const existing = await chrome.alarms.get(TICK);
   if (!existing) await chrome.alarms.create(TICK, { periodInMinutes: 1, delayInMinutes: 0.1 });
@@ -78,6 +81,10 @@ chrome.notifications.onButtonClicked.addListener((id, idx) => {
 // Re-plan autopilot slots whenever its settings change (pause/resume, cadence, windows…).
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes.settings) return;
+  type S = { providers?: { ollama?: { baseUrl?: string } } } | undefined;
+  const oldHost = (changes.settings.oldValue as S)?.providers?.ollama?.baseUrl;
+  const newHost = (changes.settings.newValue as S)?.providers?.ollama?.baseUrl;
+  if (newHost && newHost !== oldHost) void syncOllamaOriginRule(newHost);
   const before = JSON.stringify((changes.settings.oldValue as { autopilot?: unknown } | undefined)?.autopilot ?? null);
   const after = JSON.stringify((changes.settings.newValue as { autopilot?: unknown } | undefined)?.autopilot ?? null);
   if (before !== after) void autopilotHooks.replan(Date.now());

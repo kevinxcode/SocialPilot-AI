@@ -139,3 +139,10 @@ test('OpenRouter requests reasoning to be excluded from content', async () => {
   await new OpenRouterProvider({ enabled: true, apiKey: 'k', baseUrl: 'https://x', timeoutMs: 1000 }).chat({ model: 'm', messages: [] });
   expect(bodies[0].reasoning).toEqual({ exclude: true });
 });
+
+test('Ollama test fails with the origin hint when POST endpoints return 403 (GET /api/tags allowed)', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => (url.endsWith('/api/tags') ? json({ models: [{ name: 'qwen3:8b' }] }) : new Response('', { status: 403 }))));
+  const r = await new OllamaProvider({ enabled: true, baseUrl: 'http://localhost:11434', timeoutMs: 1000 }).test();
+  expect(r.ok).toBe(false);
+  expect(r.message).toMatch(/OLLAMA_ORIGINS/);
+});

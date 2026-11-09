@@ -47,8 +47,8 @@ export class OllamaProvider implements AIProvider {
             vision = info.capabilities.includes('vision');
             chat = info.capabilities.includes('completion');
           }
-        } catch {
-          /* keep heuristic */
+        } catch (e) {
+          if (e instanceof ProviderError && e.status === 403) throw e; // origin blocked: chat would fail too
         }
         return chat ? { key: `ollama:${m.name}`, id: m.name, providerId: 'ollama' as const, name: m.name, isFree: true, vision } : null;
       }),
