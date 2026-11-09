@@ -43,7 +43,7 @@ export function extractJson(text: string): unknown {
 }
 
 // Some models double-escape newlines in the JSON, leaving a literal backslash-n in the text: turn it back into a line break.
-const str = (v: unknown): string => (typeof v === 'string' ? v.replace(/\\r?\\n/g, '\n').trim() : v == null ? '' : String(v));
+const str = (v: unknown): string => (typeof v === 'string' ? v.replace(/(?:\\r)?\\n/g, '\n').trim() : v == null ? '' : String(v));
 
 export function normalizeHashtags(v: unknown): string[] {
   const list = Array.isArray(v) ? v.map(str) : str(v).split(/[,\s]+/);
