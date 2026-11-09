@@ -147,6 +147,11 @@ export function MediaLibraryPage() {
                 <div className="truncate text-xs font-medium" title={m.name}>
                   {m.name}
                 </div>
+                {m.category && (
+                  <div className="truncate text-[11px] text-primary" title={m.category}>
+                    📁 {m.category}
+                  </div>
+                )}
                 <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
                   {m.width ? `${m.width}×${m.height}` : ''} · {fmtSize(m.size)}
                   {m.usedCount > 0 ? <Badge tone="info">used {m.usedCount}×</Badge> : <Badge tone="success">unused</Badge>}
