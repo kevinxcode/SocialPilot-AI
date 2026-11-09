@@ -8,6 +8,7 @@ import { fingerprint } from '@/services/publishing/fingerprint';
 import { autopilotHooks } from './autopilotHooks';
 import { syncOllamaOriginRule } from './ollamaOrigin';
 import { isTrustedSender } from './sender';
+import { ModelRegistry } from '@/services/ai/ModelRegistry';
 import { getSettings } from '@/services/storage/settings';
 import type { SwRequest, SwResponse } from './messages';
 import type { Post } from '@/types/models';
@@ -64,6 +65,8 @@ async function setup(startup: boolean) {
   await seedIfEmpty();
   await syncOllamaOriginRule((await getSettings()).providers.ollama.baseUrl).catch((e: Error) => log('warn', 'ollama', e.message));
   if (startup) await recoverOnStartup(Date.now());
+  // First run: load local models so Ollama works without visiting AI Providers.
+  await ModelRegistry.refresh('ollama').catch(() => undefined);
   const existing = await chrome.alarms.get(TICK);
   if (!existing) await chrome.alarms.create(TICK, { periodInMinutes: 1, delayInMinutes: 0.1 });
   void tick();
