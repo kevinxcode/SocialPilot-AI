@@ -1,4 +1,4 @@
-export type Platform = 'threads' | 'facebook' | 'fbgroup';
+export type Platform = 'threads' | 'facebook' | 'fbgroup' | 'instagram';
 export type ProviderId = 'openrouter' | 'ollama' | 'nvidia';
 export type RouterMode = 'manual' | 'auto' | 'freeOnly' | 'offline';
 export type PostStatus = 'draft' | 'scheduled' | 'processing' | 'verifying' | 'published' | 'failed' | 'cancelled';
@@ -93,10 +93,8 @@ export interface MediaItem {
   name: string;
   type: string;
   size: number;
-  /** local copy; may be missing on a device that has not downloaded it from Google Drive yet */
+  /** the file itself (stored on this device only; the Media Library is not synced) */
   blob?: Blob;
-  /** Google Drive file id (cloud sync) */
-  driveFileId?: string;
   thumb?: string;
   tags: string[];
   category?: string;
@@ -141,6 +139,8 @@ export interface Post {
   replyTargetText?: string;
   fingerprint: string;
   source: 'manual' | 'autopilot';
+  /** paused by the user: stays in the queue but is not published until resumed */
+  paused?: boolean;
   attempts: number;
   nextRetryAt?: number;
   error?: string;

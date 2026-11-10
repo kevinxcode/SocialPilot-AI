@@ -88,3 +88,80 @@ test('Threads replies open the parent post and verify the reply instead of creat
   expect(f.sent).toEqual(['preflight', 'reply', 'findReply']);
   expect(f.d.open).toHaveBeenNthCalledWith(2, target, { focus: true });
 });
+
+describe('Instagram', () => {
+  const igPost: Post = { ...post, platform: 'instagram', text: 'Laundry rapi bersama CuciQu Pro https://cuciqu.id', fingerprint: 'laundry rapi bersama cuciqu pro' };
+  const img = new Blob(['x'], { type: 'image/png' });
+  beforeEach(async () => {
+    await db.accounts.add({ id: 'ig', platform: 'instagram', name: 'cuciqu.pro', profileUrl: 'https://www.instagram.com/cuciqu.pro/' });
+  });
+
+  test('no image → failed before anything is opened', async () => {
+    const f = fakeDriver({});
+    expect(await new RpaPublisher('instagram', f.d, 0).publish(igPost, [], {})).toMatchObject({ status: 'failed', reason: expect.stringMatching(/image or video/) });
+    expect(f.d.open).not.toHaveBeenCalled();
+  });
+
+  test('shared → confirmed by opening the newest posts and reading their caption; links are removed from the caption', async () => {
+    const f = fakeDriver({
+      preflight: [{ ok: true }],
+      publish: [{ status: 'clicked' }],
+      recentPosts: [{ urls: ['https://www.instagram.com/p/OLD/', 'https://www.instagram.com/p/NEW/'] }],
+      findExisting: [{ found: false }, { found: true }],
+    });
+    const r = await new RpaPublisher('instagram', f.d, 0).publish(igPost, [img], {});
+    expect(r).toEqual({ status: 'published', url: 'https://www.instagram.com/p/NEW/' });
+    expect(f.sent).toEqual(['preflight', 'publish', 'recentPosts', 'findExisting', 'findExisting']);
+    const findMsg = (f.d.send as ReturnType<typeof vi.fn>).mock.calls.find((c) => (c[1] as { cmd: string }).cmd === 'findExisting')![1] as { since?: number };
+    expect(findMsg.since).toBeGreaterThan(Date.now() - 60_000); // only posts newer than this run are accepted
+    const publishMsg = (f.d.send as ReturnType<typeof vi.fn>).mock.calls.find((c) => (c[1] as { cmd: string }).cmd === 'publish')![1] as { input: { text: string } };
+    expect(publishMsg.input.text).not.toContain('https://');
+  });
+
+  test('shared but not found among the newest posts → unknown (checked again before any retry)', async () => {
+    const f = fakeDriver({ preflight: [{ ok: true }], publish: [{ status: 'clicked' }], recentPosts: [{ urls: ['https://www.instagram.com/p/OLD/'] }], findExisting: [{ found: false }] });
+    expect((await new RpaPublisher('instagram', f.d, 0).publish(igPost, [img], {})).status).toBe('unknown');
+  });
+
+  test('findExisting (used by the "verifying" step) looks at the profile the same way', async () => {
+    const f = fakeDriver({ recentPosts: [{ urls: ['https://www.instagram.com/p/NEW/'] }], findExisting: [{ found: true }] });
+    expect(await new RpaPublisher('instagram', f.d, 0).findExisting(igPost)).toEqual({ found: true, url: 'https://www.instagram.com/p/NEW/' });
+  });
+});
+
+describe('Facebook Group: "Your content" counts as success', () => {
+  const gPost: Post = { ...post, platform: 'fbgroup', groupId: 'g1', fingerprint: 'laundry bekasi rapi' };
+  beforeEach(async () => {
+    await db.groups.add({ id: 'g1', name: 'Laundry Bekasi', url: 'https://www.facebook.com/groups/685112895274502', enabled: true } as never);
+  });
+
+  test('not in the feed, but under Pending → success (pending approval)', async () => {
+    const f = fakeDriver({ findExisting: [{ found: false }, { found: true }] });
+    expect(await new RpaPublisher('fbgroup', f.d, 0).findExisting(gPost)).toEqual({ found: true, pending: true });
+    expect((f.d.open as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])).toEqual([
+      'https://www.facebook.com/groups/685112895274502',
+      'https://www.facebook.com/groups/685112895274502/my_pending_content',
+    ]);
+  });
+
+  test('not in the feed nor Pending, but under Published → success', async () => {
+    const f = fakeDriver({ findExisting: [{ found: false }, { found: false }, { found: true, url: 'https://www.facebook.com/groups/685112895274502/posts/1' }] });
+    expect(await new RpaPublisher('fbgroup', f.d, 0).findExisting(gPost)).toEqual({ found: true, url: 'https://www.facebook.com/groups/685112895274502/posts/1' });
+    expect((f.d.open as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]).toBe('https://www.facebook.com/groups/685112895274502/my_posted_content');
+  });
+
+  test('nowhere → not found', async () => {
+    const f = fakeDriver({ findExisting: [{ found: false }] });
+    expect(await new RpaPublisher('fbgroup', f.d, 0).findExisting(gPost)).toEqual({ found: false });
+  });
+});
+
+test('Instagram: the caption proof is logged right after Share, even if the profile check is then interrupted', async () => {
+  await db.accounts.add({ id: 'ig2', platform: 'instagram', name: 'cuciqu.app', profileUrl: 'https://www.instagram.com/cuciqu.app/' });
+  const closed = Object.assign(new Error('Automation tab was closed'), { name: 'TabClosedError' });
+  const f = fakeDriver({ preflight: [{ ok: true }], publish: [{ status: 'clicked', note: 'Caption: keys, counter 412/2,200' }], recentPosts: [closed] });
+  const p: Post = { ...post, platform: 'instagram', accountId: 'ig2', fingerprint: 'laundry rapi bersama cuciqu pro' };
+  expect((await new RpaPublisher('instagram', f.d, 0).publish(p, [new Blob(['x'], { type: 'image/png' })], {})).status).toBe('cancelled');
+  const logs = await db.logs.toArray();
+  expect(logs.some((l) => /shared — Caption: keys, counter 412\/2,200/.test(l.message))).toBe(true);
+});

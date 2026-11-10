@@ -156,11 +156,40 @@ export async function typeText(el: Element, text: string): Promise<boolean> {
     if (await settled(h, text, 1500)) return true;
   }
 
-  // 3) direct DOM (non-framework editors)
+  // 3) direct DOM (non-framework editors only). NEVER for Lexical (Meta: Instagram, Threads, Facebook): the text
+  //    would only be on screen, not in the editor's state — Instagram then posted with an EMPTY caption.
+  if (h.getAttribute('data-lexical-editor') === 'true') return false;
   h.textContent = text;
   h.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
   await sleep(50);
   return editorMatches(h, text);
+}
+
+/** A hashtag / mention suggestion list is open over the composer. */
+const suggestionsOpen = () =>
+  Array.from(document.querySelectorAll('[role="listbox"], ul[role="listbox"], [role="dialog"] [role="option"]')).some((el) => !(el as HTMLElement).hidden);
+
+/**
+ * When the text ends with a #hashtag or @mention, Facebook / Threads / Instagram open a suggestion list over the
+ * composer, and clicking Post while it is open does not post. A user ends the word with a space: do the same
+ * (trailing whitespace is dropped when posting, and editorMatches ignores whitespace, so the text check still holds).
+ * Never presses Escape — that can close the whole composer.
+ */
+export async function closeSuggestions(el: Element, text: string): Promise<void> {
+  const endsWithTag = /[#@][\p{L}\p{N}_.]+\s*$/u.test(text);
+  if (!endsWithTag && !suggestionsOpen()) return;
+  const h = el as HTMLElement;
+  h.focus();
+  const sel = window.getSelection();
+  if (sel && document.createRange) {
+    const r = document.createRange();
+    r.selectNodeContents(h);
+    r.collapse(false); // caret at the very end
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+  if (typeof document.execCommand === 'function') document.execCommand('insertText', false, ' ');
+  await sleep(400);
 }
 
 /** Attach files to a file input the way a user selection would. */

@@ -6,6 +6,8 @@ import { db } from '@/services/storage/db';
 import { sendToSw } from '@/background/messages';
 import { uid } from '@/lib/utils';
 import type { Account, Platform } from '@/types/models';
+import { instagramHandle } from '@/services/publishing/rpa/instagram';
+import { MediaPicker } from './PostActions';
 
 export function validateAccount(platform: Platform, profileUrl: string, name: string): string | null {
   let u: URL;
@@ -17,6 +19,9 @@ export function validateAccount(platform: Platform, profileUrl: string, name: st
   if (platform === 'threads') {
     if (!/(^|\.)threads\.(net|com)$/.test(u.hostname)) return 'Threads URL must be on threads.com or threads.net';
     if (!/^\/@[A-Za-z0-9._]+\/?$/.test(u.pathname)) return 'Use your profile URL, e.g. https://www.threads.com/@username';
+  } else if (platform === 'instagram') {
+    if (!/(^|\.)instagram\.com$/.test(u.hostname)) return 'Instagram URL must be on instagram.com';
+    if (!instagramHandle(profileUrl) || u.pathname.split('/').filter(Boolean).length !== 1) return 'Use your profile URL, e.g. https://www.instagram.com/username/';
   } else {
     if (!/(^|\.)facebook\.com$/.test(u.hostname)) return 'Facebook Page URL must be on facebook.com';
     if (u.pathname === '/' || /^\/(profile\.php)?$/.test(u.pathname)) return 'Use the Page URL, e.g. https://www.facebook.com/YourPage';
@@ -25,7 +30,7 @@ export function validateAccount(platform: Platform, profileUrl: string, name: st
   return null;
 }
 
-function AccountCard({ platform }: { platform: Platform }) {
+export function AccountCard({ platform }: { platform: Platform }) {
   const toast = useToast();
   const acc = useLiveQuery(() => db.accounts.where('platform').equals(platform).first(), [platform]);
   const [url, setUrl] = useState('');
@@ -33,6 +38,8 @@ function AccountCard({ platform }: { platform: Platform }) {
   const [busy, setBusy] = useState<'check' | 'dry' | null>(null);
   const [dryText, setDryText] = useState('Tes SocialPilot AI — dry run, tidak akan diposting. 🧺');
   const [result, setResult] = useState<{ ok: boolean; message?: string } | null>(null);
+  const [dryMedia, setDryMedia] = useState<string[]>([]);
+  const ig = platform === 'instagram';
 
   useEffect(() => {
     if (acc) {
@@ -48,8 +55,9 @@ function AccountCard({ platform }: { platform: Platform }) {
     const next: Account = {
       id: acc?.id ?? uid(),
       platform,
-      profileUrl: url.trim().replace(/\/$/, ''),
-      name: platform === 'threads' ? (handle ?? name) : name.trim(),
+      // Instagram profile URLs keep their trailing slash (that is how Instagram shows the profile page).
+      profileUrl: ig ? `https://www.instagram.com/${instagramHandle(url.trim())}/` : url.trim().replace(/\/$/, ''),
+      name: platform === 'threads' ? (handle ?? name) : ig ? (instagramHandle(url.trim()) ?? name) : name.trim(),
     };
     await db.accounts.put(next);
     // keep posts pointing at the single account for this platform
@@ -60,12 +68,16 @@ function AccountCard({ platform }: { platform: Platform }) {
   const run = async (kind: 'check' | 'dry') => {
     setBusy(kind);
     setResult(null);
-    const r = await sendToSw(kind === 'check' ? { type: 'checkLogin', platform } : { type: 'dryRun', platform, text: dryText });
+    if (kind === 'dry' && ig && dryMedia.length !== 1) {
+      setBusy(null);
+      return setResult({ ok: false, message: 'Pick one image for the Instagram dry run' });
+    }
+    const r = await sendToSw(kind === 'check' ? { type: 'checkLogin', platform } : { type: 'dryRun', platform, text: dryText, ...(ig ? { mediaIds: dryMedia } : {}) });
     setResult(r);
     setBusy(null);
   };
 
-  const title = platform === 'threads' ? 'Threads account' : 'Facebook Page';
+  const title = platform === 'threads' ? 'Threads account' : ig ? 'Instagram account' : 'Facebook Page';
   return (
     <Card>
       <CardTitle className="flex items-center gap-2">
@@ -74,11 +86,11 @@ function AccountCard({ platform }: { platform: Platform }) {
           (acc.lastCheckOk ? <Badge tone="success">Logged in</Badge> : <Badge tone="danger">Check failed</Badge>)}
       </CardTitle>
       <div className="grid gap-3 md:grid-cols-2">
-        <Field label={platform === 'threads' ? 'Profile URL' : 'Page URL'}>
+        <Field label={platform === 'facebook' ? 'Page URL' : 'Profile URL'}>
           <Input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder={platform === 'threads' ? 'https://www.threads.com/@cuciqu.pro' : 'https://www.facebook.com/cuciqupro'}
+            placeholder={platform === 'threads' ? 'https://www.threads.com/@cuciqu.pro' : ig ? 'https://www.instagram.com/cuciqu.pro/' : 'https://www.facebook.com/cuciqupro'}
           />
         </Field>
         {platform === 'facebook' && (
@@ -101,10 +113,16 @@ function AccountCard({ platform }: { platform: Platform }) {
       <div className="mt-4 rounded-md border border-border p-3">
         <div className="mb-2 text-sm font-medium">Test publisher (dry run)</div>
         <p className="mb-2 text-xs text-muted-foreground">
-          Opens the composer in a background tab, types this text and stops before clicking Post. Nothing is published. The tab stays
-          open so you can inspect it, then close it yourself.
+          {ig
+            ? 'Opens Instagram in a background tab, uploads the image, clicks Next, types this caption and stops before clicking Share. Nothing is published. The tab stays open so you can inspect it, then close it yourself.'
+            : 'Opens the composer in a background tab, types this text and stops before clicking Post. Nothing is published. The tab stays open so you can inspect it, then close it yourself.'}
         </p>
         <Textarea rows={2} value={dryText} onChange={(e) => setDryText(e.target.value)} />
+        {ig && (
+          <div className="mt-2">
+            <MediaPicker value={dryMedia} onChange={setDryMedia} max={1} />
+          </div>
+        )}
         <Button className="mt-2" variant="outline" disabled={!acc || !!busy} onClick={() => run('dry')}>
           {busy === 'dry' && <Loader2 className="h-4 w-4 animate-spin" />} Run dry run
         </Button>

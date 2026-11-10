@@ -1,15 +1,15 @@
 import { open, seal, WrongPassphraseError } from '@/services/cloud/crypto';
-import { authUrl, parseRedirect, idToken } from '@/services/cloud/auth';
+import { authMessage, idToken, sendPasswordReset, signIn } from '@/services/cloud/auth';
+import { getSession } from '@/services/cloud/config';
 import { setCloudConfig, setSession } from '@/services/cloud/config';
 import { changedSince, putRecordIfNewer, setMeta } from '@/services/cloud/firestore';
 import { settingsForCloud, settingsFromCloud } from '@/services/cloud/sync';
 import { holdsPublisherLease, LEASE_MS } from '@/services/cloud/leader';
-import { mediaBlob } from '@/services/cloud/drive';
 import { DEFAULT_SETTINGS } from '@/services/storage/settings';
-import { db, resetDb } from '@/services/storage/db';
+import { resetDb } from '@/services/storage/db';
 import type { Settings } from '@/types/models';
 
-const CFG = { apiKey: 'AIzaTEST', projectId: 'sp-test', clientId: 'cid.apps.googleusercontent.com' };
+const CFG = { apiKey: 'AIzaTEST', projectId: 'sp-test' };
 const NOW = Date.parse('2026-11-10T03:00:00Z');
 
 beforeEach(async () => {
@@ -19,7 +19,7 @@ beforeEach(async () => {
 
 async function signedIn() {
   await setCloudConfig(CFG);
-  await setSession({ uid: 'u1', email: 'a@b.c', idToken: 'ID', refreshToken: 'RT', idExpiresAt: Date.now() + 3600_000, googleToken: 'GT', googleExpiresAt: Date.now() + 3600_000 });
+  await setSession({ uid: 'u1', email: 'a@b.c', idToken: 'ID', refreshToken: 'RT', idExpiresAt: Date.now() + 3600_000 });
 }
 
 const resp = (status: number, body: unknown) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status });
@@ -56,18 +56,38 @@ describe('encryption of API keys', () => {
   });
 });
 
-describe('Google sign-in', () => {
-  test('auth URL asks only for profile + drive.file; redirect is parsed', () => {
-    const u = new URL(authUrl(CFG, 'https://abc.chromiumapp.org/', true));
-    expect(u.searchParams.get('scope')).toBe('openid email profile https://www.googleapis.com/auth/drive.file');
-    expect(u.searchParams.get('response_type')).toBe('token');
-    expect(parseRedirect('https://abc.chromiumapp.org/#access_token=T&expires_in=3599')).toEqual({ token: 'T', expiresIn: 3599 });
-    expect(() => parseRedirect('https://abc.chromiumapp.org/#error=access_denied')).toThrow(/access_denied/);
+describe('email/password sign-in', () => {
+  test('signs in with email + password and stores the session', async () => {
+    await setCloudConfig(CFG);
+    const f = vi.fn(async () => resp(200, { localId: 'u1', email: 'me@x.id', idToken: 'ID', refreshToken: 'RT', expiresIn: '3600' }));
+    const s = await signIn(' me@x.id ', 'pw123456', f as never, NOW);
+    expect(s).toMatchObject({ uid: 'u1', email: 'me@x.id', idExpiresAt: NOW + 3600_000 });
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=AIzaTEST');
+    expect(JSON.parse(String(init.body))).toEqual({ email: 'me@x.id', password: 'pw123456', returnSecureToken: true });
+    expect((await getSession())?.refreshToken).toBe('RT');
+  });
+
+  test('wrong password → clear message, no session', async () => {
+    await setCloudConfig(CFG);
+    const f = vi.fn(async () => resp(400, { error: { message: 'INVALID_LOGIN_CREDENTIALS' } }));
+    await expect(signIn('me@x.id', 'nope', f as never)).rejects.toThrow('Wrong email or password');
+    expect(await getSession()).toBeNull();
+    expect(authMessage('TOO_MANY_ATTEMPTS_TRY_LATER : Access disabled')).toMatch(/Too many attempts/);
+  });
+
+  test('password reset email is requested from Firebase', async () => {
+    await setCloudConfig(CFG);
+    const f = vi.fn(async () => resp(200, { email: 'me@x.id' }));
+    await sendPasswordReset('me@x.id', f as never);
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain('accounts:sendOobCode');
+    expect(JSON.parse(String(init.body))).toEqual({ requestType: 'PASSWORD_RESET', email: 'me@x.id' });
   });
 
   test('the Firebase ID token is refreshed before it expires', async () => {
     await signedIn();
-    await setSession({ uid: 'u1', email: 'a@b.c', idToken: 'OLD', refreshToken: 'RT', idExpiresAt: NOW + 60_000, googleToken: 'GT', googleExpiresAt: NOW + 3600_000 });
+    await setSession({ uid: 'u1', email: 'a@b.c', idToken: 'OLD', refreshToken: 'RT', idExpiresAt: NOW + 60_000 });
     const f = vi.fn(async () => resp(200, { id_token: 'NEW', refresh_token: 'RT2', expires_in: '3600' }));
     expect(await idToken(f as never, NOW)).toEqual({ token: 'NEW', uid: 'u1' });
     expect(String((f.mock.calls[0] as unknown[])[0])).toContain('securetoken.googleapis.com');
@@ -152,16 +172,6 @@ describe('one publishing device', () => {
   });
 });
 
-test('a media file that only exists in Drive is downloaded once and cached', async () => {
-  await signedIn();
-  await db.media.add({ id: 'm1', name: 'a.png', type: 'image/png', size: 1, tags: [], usedCount: 0, createdAt: 1, driveFileId: 'F1' });
-  const f = vi.fn(async () => new Response(new Blob(['png']), { status: 200 }));
-  const m = (await db.media.get('m1'))!;
-  const b = await mediaBlob(m, f as never);
-  expect(await b!.text()).toBe('png');
-  expect(String((f.mock.calls[0] as unknown[])[0])).toBe('https://www.googleapis.com/drive/v3/files/F1?alt=media');
-  expect((await db.media.get('m1'))?.blob).toBeDefined();
-});
 
 describe('handover between devices', () => {
   const make = (state: { lease: { deviceId: string; until: number; label: string } | null; handover: { to: string; at: number } | null }) => ({

@@ -1,5 +1,10 @@
 # Email/Password Cloud Sync with Backblaze B2 — Design
 
+> **Implemented (2026-11-10), phase 1 only:** Firebase email/password + Firestore sync. Media is NOT synced yet: the
+> Media Library stays on each device and a post whose media is missing on the publishing device is not posted (retried).
+> Backblaze B2 + the signer API below are a later phase. Accounts are created in the Firebase Console; sign-up is
+> disabled. "Continue without an account" stays available.
+
 ## Intent
 
 SocialPilot AI already has two-way synchronization through Firebase Authentication, Firestore, and Google Drive, but authentication currently uses Google OAuth. Replace the user-facing authentication with Firebase email/password, keep structured application data in Firestore, and move cloud media to a private Backblaze B2 bucket through its S3-compatible API.

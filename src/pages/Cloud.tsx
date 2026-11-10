@@ -1,15 +1,13 @@
-import { useEffect, useState } from 'react';
-import { CheckCircle2, Cloud, Copy, Loader2, LogIn, LogOut, RefreshCw, ShieldCheck } from 'lucide-react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { CheckCircle2, Cloud, Loader2, LogIn, LogOut, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Badge, Button, Card, CardTitle, Field, Input, useToast } from '@/components/ui';
 import { sendToSw } from '@/background/messages';
-import { getCloudConfig, getSession, setCloudConfig, type CloudConfig, type CloudSession } from '@/services/cloud/config';
-import { signOut } from '@/services/cloud/auth';
-import { loginWithGoogle } from '@/services/cloud/login';
+import { builtInConfig, deviceId, getCloudConfig, getSession, setCloudConfig, type CloudConfig, type CloudSession } from '@/services/cloud/config';
+import { sendPasswordReset, signOut } from '@/services/cloud/auth';
+import { login } from '@/services/cloud/login';
 import { getPassphrase, setPassphrase } from '@/services/cloud/crypto';
-import { DRIVE_CONSENT_KEY, resealSettings, resetPull, SYNC_STATUS_KEY } from '@/services/cloud/sync';
-import { signIn } from '@/services/cloud/auth';
+import { resealSettings, resetPull, SYNC_STATUS_KEY } from '@/services/cloud/sync';
 import { currentLease, takeOver, type Lease } from '@/services/cloud/leader';
-import { builtInConfig, deviceId } from '@/services/cloud/config';
 
 type Status = { at: number; ok: boolean; pushed?: number; pulled?: number; error?: string } | undefined;
 
@@ -26,8 +24,10 @@ function useStorage<T>(key: string): T | undefined {
 
 export function CloudPage() {
   const toast = useToast();
-  const [cfg, setCfg] = useState<CloudConfig>({ apiKey: '', projectId: '', clientId: '' });
+  const [cfg, setCfg] = useState<CloudConfig>({ apiKey: '', projectId: '' });
   const [session, setSession] = useState<CloudSession | null>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [pass, setPass] = useState('');
   const [hasPass, setHasPass] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -35,16 +35,15 @@ export function CloudPage() {
   const [me, setMe] = useState('');
   const status = useStorage<Status>(SYNC_STATUS_KEY);
   const keysLocked = useStorage<boolean>('cloudKeysLocked');
-  const driveNeeded = useStorage<boolean>(DRIVE_CONSENT_KEY);
-  const redirect = typeof chrome !== 'undefined' && chrome.identity ? chrome.identity.getRedirectURL() : '';
 
   const refresh = async () => {
     const c = await getCloudConfig();
     if (c) setCfg(c);
-    setSession(await getSession());
+    const s = await getSession();
+    setSession(s);
     setHasPass(!!(await getPassphrase()));
     setMe(await deviceId());
-    if (await getSession()) setLease(await currentLease().catch(() => null));
+    if (s) setLease(await currentLease().catch(() => null));
   };
   useEffect(() => {
     void refresh();
@@ -65,22 +64,17 @@ export function CloudPage() {
 
   const saveConfig = () =>
     run('cfg', async () => {
-      if (!cfg.apiKey.trim() || !cfg.projectId.trim() || !cfg.clientId.trim()) throw new Error('Fill in all three Firebase fields');
+      if (!cfg.apiKey.trim() || !cfg.projectId.trim()) throw new Error('Fill in both Firebase fields');
       await setCloudConfig(cfg);
     }, 'Cloud settings saved');
 
-  const login = () =>
-    run('login', async () => {
-      if ((await loginWithGoogle((m) => confirm(m))) === 'cancelled') throw new Error('Sign-in cancelled — nothing was changed');
+  const signIn = (e: FormEvent) => {
+    e.preventDefault();
+    void run('login', async () => {
+      if ((await login(email, password, (m) => confirm(m))) === 'cancelled') throw new Error('Sign-in cancelled — nothing was changed');
+      setPassword('');
     }, 'Signed in — syncing now');
-
-  // Shows Google's permission screen again (same account) so the Google Drive box can be ticked.
-  const allowDrive = () =>
-    run('drive', async () => {
-      await signIn();
-      await chrome.storage.local.remove(DRIVE_CONSENT_KEY);
-      await sendToSw({ type: 'tick' });
-    }, 'Google Drive allowed — syncing media now');
+  };
 
   const savePass = () =>
     run('pass', async () => {
@@ -91,6 +85,7 @@ export function CloudPage() {
       await resetPull(); // and decrypt keys synced from other devices
       await sendToSw({ type: 'tick' });
     }, 'Passphrase saved on this device');
+
 
   const signedIn = !!session;
   const isMain = lease?.deviceId === me && (lease?.until ?? 0) > Date.now();
@@ -104,20 +99,33 @@ export function CloudPage() {
               <Cloud className="h-5 w-5" /> Cloud & Sync
             </CardTitle>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Sign in with Google to use the same brand, settings, groups, topics, ideas and posts on every browser and laptop. Media files are
-              stored in your own Google Drive (folder “SocialPilot Media”). Facebook and Threads logins stay in each browser.
+              Sign in with your SocialPilot account to use the same brand, settings, groups, topics, ideas and posts on every browser and laptop.
+              Images and videos stay on the computer where you added them (not synced), so posts with media are published from that
+              computer. Facebook and Threads logins stay in each browser. Without an account everything keeps working on this computer only.
             </p>
           </div>
-          {signedIn ? (
+          {signedIn && (
             <Button variant="outline" disabled={!!busy} onClick={() => run('out', signOut, 'Signed out — this device works locally')}>
               <LogOut className="h-4 w-4" /> Sign out {session.email}
             </Button>
-          ) : (
-            <Button disabled={!!busy || !cfg.apiKey} onClick={login}>
-              {busy === 'login' ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />} Login with Google
-            </Button>
           )}
         </div>
+        {!signedIn && (
+          <form className="mt-3 flex flex-wrap items-end gap-2" onSubmit={signIn}>
+            <Field label="Email">
+              <Input type="email" className="w-64" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
+            </Field>
+            <Field label="Password">
+              <Input type="password" className="w-56" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+            </Field>
+            <Button type="submit" disabled={!!busy || !cfg.apiKey || !email || !password}>
+              {busy === 'login' ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />} Sign in
+            </Button>
+            <Button type="button" variant="ghost" disabled={!!busy || !email} onClick={() => run('reset', () => sendPasswordReset(email), 'Password reset email sent')}>
+              Forgot password?
+            </Button>
+          </form>
+        )}
         {signedIn && (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
             <Badge tone="success">
@@ -131,17 +139,6 @@ export function CloudPage() {
             )}
             <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => run('sync', () => sendToSw({ type: 'tick' }), 'Sync started')}>
               <RefreshCw className="h-3.5 w-3.5" /> Sync now
-            </Button>
-          </div>
-        )}
-        {signedIn && driveNeeded && (
-          <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-            <p className="mb-2">
-              Google Drive is not allowed yet, so media files are not synced. Click the button, choose your account and <b>tick the Google Drive
-              box</b> on Google’s permission screen, then click Continue.
-            </p>
-            <Button size="sm" disabled={!!busy} onClick={allowDrive}>
-              Allow Google Drive
             </Button>
           </div>
         )}
@@ -169,10 +166,10 @@ export function CloudPage() {
           <ShieldCheck className="h-5 w-5" /> AI API keys — encrypted sync
         </CardTitle>
         <p className="mb-3 text-sm text-muted-foreground">
-          Your AI API keys are encrypted with this passphrase before they leave the browser; the cloud only stores ciphertext. Use the same
-          passphrase on every device. If you forget it the keys cannot be recovered — just paste them again.
+          Your AI API keys are encrypted with this passphrase before they leave the browser; the cloud only stores ciphertext.
+          Use the same passphrase on every device. If you forget it the keys cannot be recovered — just paste them again.
         </p>
-        {keysLocked && <p className="mb-2 text-sm text-red-500">Synced API keys are locked: enter the passphrase you used on your other device.</p>}
+        {keysLocked && <p className="mb-2 text-sm text-red-500">Synced keys are locked: enter the passphrase you used on your other device.</p>}
         <div className="flex flex-wrap items-end gap-2">
           <Field label={hasPass ? 'Passphrase (saved on this device) — enter a new one to change it' : 'Passphrase (min. 8 characters)'}>
             <Input type="password" className="w-72" value={pass} onChange={(e) => setPass(e.target.value)} autoComplete="new-password" />
@@ -183,33 +180,25 @@ export function CloudPage() {
         </div>
       </Card>
 
+
       {!builtInConfig() && (
-      <Card>
-        <CardTitle className="mb-1">Firebase project</CardTitle>
-        <p className="mb-3 text-sm text-muted-foreground">One-time setup — follow docs/SETUP-CLOUD.md. These values stay on this device.</p>
-        <div className="grid gap-3 md:grid-cols-3">
-          <Field label="Web API key">
-            <Input value={cfg.apiKey} onChange={(e) => setCfg({ ...cfg, apiKey: e.target.value })} placeholder="AIza…" />
-          </Field>
-          <Field label="Project ID">
-            <Input value={cfg.projectId} onChange={(e) => setCfg({ ...cfg, projectId: e.target.value })} placeholder="socialpilot-12345" />
-          </Field>
-          <Field label="OAuth client ID (Web application)">
-            <Input value={cfg.clientId} onChange={(e) => setCfg({ ...cfg, clientId: e.target.value })} placeholder="…apps.googleusercontent.com" />
-          </Field>
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          Authorized redirect URI for the OAuth client: <code className="rounded bg-muted px-1.5 py-0.5">{redirect}</code>
-          <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(redirect).then(() => toast('Copied'))}>
-            <Copy className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-        <div className="mt-3">
-          <Button disabled={!!busy} onClick={saveConfig}>
-            Save
-          </Button>
-        </div>
-      </Card>
+        <Card>
+          <CardTitle className="mb-1">Firebase project</CardTitle>
+          <p className="mb-3 text-sm text-muted-foreground">One-time setup — follow docs/SETUP-CLOUD.md. These values stay on this device.</p>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Web API key">
+              <Input value={cfg.apiKey} onChange={(e) => setCfg({ ...cfg, apiKey: e.target.value })} placeholder="AIza…" />
+            </Field>
+            <Field label="Project ID">
+              <Input value={cfg.projectId} onChange={(e) => setCfg({ ...cfg, projectId: e.target.value })} placeholder="socialpilot-12345" />
+            </Field>
+          </div>
+          <div className="mt-3">
+            <Button disabled={!!busy} onClick={saveConfig}>
+              Save
+            </Button>
+          </div>
+        </Card>
       )}
     </div>
   );

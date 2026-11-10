@@ -26,7 +26,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autopilot: {
     enabled: false,
     paused: false,
-    platforms: { threads: true, facebook: true, fbgroup: false },
+    // Instagram is scheduled by hand for now (not part of autopilot).
+    platforms: { threads: true, facebook: true, fbgroup: false, instagram: false },
     postsPerDay: 2,
     groupPostsPerDay: 1,
     windowStart: '09:00',

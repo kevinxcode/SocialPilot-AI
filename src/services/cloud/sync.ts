@@ -10,34 +10,28 @@
  * - Conflicts: newest edit wins — except that a published post is never turned back into an unpublished one
  *   (that is what could cause a post to be published twice).
  * - First sign-in on a device: pull first, then upload only what the cloud does not have yet.
- * - Media files go to Google Drive (drive.ts); only metadata is synced. AI API keys are end-to-end encrypted.
+ * - Media files stay on each device for now (the Media Library is not synced). AI API keys are end-to-end encrypted.
  * - Not synced (device-local by design): queue, logs, AI usage, model cache.
  */
 import type { Table } from 'dexie';
 import { db, log } from '@/services/storage/db';
 import { getSettings } from '@/services/storage/settings';
-import type { MediaItem, Post, ProviderId, Settings } from '@/types/models';
+import type { Post, ProviderId, Settings } from '@/types/models';
 import { changedSince, putRecordIfNewer, type RemoteRecord } from './firestore';
 import { getPassphrase, open, seal, type Sealed } from './crypto';
 import { getSession } from './config';
-import { trashMedia, uploadMedia } from './drive';
 import { isQuiet, quietly } from './quiet';
 
-export const SYNC_TABLES = ['brands', 'knowledge', 'accounts', 'media', 'ideas', 'posts', 'groups', 'topics'] as const;
+/** 'media' is deliberately absent: images and videos stay on the device where they were added. */
+export const SYNC_TABLES = ['brands', 'knowledge', 'accounts', 'ideas', 'posts', 'groups', 'topics'] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 const isSyncTable = (t: string): t is SyncTable => (SYNC_TABLES as readonly string[]).includes(t);
 
 const DIRTY = 'dirty:';
-/** Drive files of deleted media, moved to the Drive trash on the next sync */
-const TRASH = 'driveTrash:';
 const LAST_PULL = 'syncLastPull';
 const LAST_UID = 'syncUid';
 const SETTINGS_ID = 'main';
 export const SYNC_STATUS_KEY = 'syncStatus';
-/** Set when Google Drive refused the upload because the Drive permission was not granted. */
-export const DRIVE_CONSENT_KEY = 'driveNeedsConsent';
-/** Max Drive uploads per sync round (the rest follow next round, so publishing is never held up for long). */
-const UPLOADS_PER_ROUND = 5;
 
 let hooksInstalled = false;
 
@@ -52,18 +46,12 @@ export function installSyncHooks(): void {
     table.hook('creating', function (key, obj, trans) {
       if (!isQuiet(trans)) void mark(t, String(key ?? obj.id));
     });
-    table.hook('updating', function (mods, key, _obj, trans) {
-      if (isQuiet(trans)) return undefined;
-      void mark(t, String(key));
-      // A replaced media file must be uploaded again: forget the old Drive copy.
-      if (t === 'media' && 'blob' in (mods as object)) return { driveFileId: undefined };
+    table.hook('updating', function (_mods, key, _obj, trans) {
+      if (!isQuiet(trans)) void mark(t, String(key));
       return undefined;
     });
-    table.hook('deleting', function (key, obj, trans) {
-      if (isQuiet(trans)) return;
-      void mark(t, String(key));
-      const fileId = t === 'media' ? (obj as { driveFileId?: string }).driveFileId : undefined;
-      if (fileId) void chrome.storage.local.set({ [`${TRASH}${fileId}`]: Date.now() }).catch(() => undefined);
+    table.hook('deleting', function (key, _obj, trans) {
+      if (!isQuiet(trans)) void mark(t, String(key));
     });
   }
 }
@@ -107,7 +95,7 @@ async function dirtyEntries(): Promise<{ key: string; table: string; id: string;
 
 /**
  * Compares the signed-in account with the one this device synced with before.
- * 'switched' = local data belongs to ANOTHER Google account (must not be uploaded into this one).
+ * 'switched' = local data belongs to ANOTHER account (must not be uploaded into this one).
  */
 export async function accountState(uid: string): Promise<'first' | 'same' | 'switched'> {
   const last = (await chrome.storage.local.get(LAST_UID))[LAST_UID] as string | undefined;
@@ -119,7 +107,7 @@ export async function wipeLocalSyncedData(): Promise<void> {
   await quietly(SYNC_TABLES.map((t) => db.table(t)), async () => {
     for (const t of SYNC_TABLES) await db.table(t).clear();
   });
-  await chrome.storage.local.remove([...(await keysWith(DIRTY)), ...(await keysWith(TRASH)), LAST_PULL, LAST_UID]);
+  await chrome.storage.local.remove([...(await keysWith(DIRTY)), LAST_PULL, LAST_UID]);
 }
 
 /**
@@ -146,8 +134,10 @@ type SyncedSettings = Omit<Settings, 'providers'> & {
   sealedKeys?: Sealed;
 };
 
+type Secrets = Partial<Record<ProviderId, string>>;
+
 export async function settingsForCloud(s: Settings, passphrase: string | null): Promise<SyncedSettings> {
-  const keys: Partial<Record<ProviderId, string>> = {};
+  const keys: Secrets = {};
   const providers = {} as SyncedSettings['providers'];
   for (const [id, p] of Object.entries(s.providers) as [ProviderId, Settings['providers'][ProviderId]][]) {
     const { apiKey, ...rest } = p;
@@ -160,12 +150,13 @@ export async function settingsForCloud(s: Settings, passphrase: string | null): 
 }
 
 export async function settingsFromCloud(remote: SyncedSettings, local: Settings, passphrase: string | null): Promise<{ settings: Settings; keysLocked: boolean }> {
-  let keys: Partial<Record<ProviderId, string>> = {};
+  let keys: Secrets = {};
   let keysLocked = false;
   if (remote.sealedKeys) {
     if (!passphrase) keysLocked = true;
-    else keys = await open<Partial<Record<ProviderId, string>>>(remote.sealedKeys, passphrase).catch(() => ((keysLocked = true), {}));
+    else keys = await open<Secrets>(remote.sealedKeys, passphrase).catch(() => ((keysLocked = true), {}));
   }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { sealedKeys: _s, ...rest } = remote;
   const providers = {} as Settings['providers'];
   for (const [id, p] of Object.entries(rest.providers) as [ProviderId, SyncedSettings['providers'][ProviderId]][]) {
@@ -182,52 +173,25 @@ export function isDowngrade(local: Post | undefined, incoming: Post | null): boo
   return !!local && local.status === 'published' && (!incoming || incoming.status !== 'published');
 }
 
-async function serialize(table: string, id: string, uploads: { left: number }): Promise<{ json: string; deleted: boolean } | 'later'> {
+async function serialize(table: string, id: string): Promise<{ json: string; deleted: boolean }> {
   if (table === 'settings') {
     return { json: JSON.stringify(await settingsForCloud(await getSettings(), await getPassphrase())), deleted: false };
   }
-  let row = (await db.table(table).get(id)) as Record<string, unknown> | undefined;
+  const row = (await db.table(table).get(id)) as Record<string, unknown> | undefined;
   if (!row) return { json: 'null', deleted: true };
-  if (table === 'media') {
-    let m = row as unknown as MediaItem;
-    if (!m.driveFileId && m.blob) {
-      if (uploads.left <= 0) return 'later';
-      uploads.left--;
-      let fileId: string;
-      try {
-        fileId = await uploadMedia(m);
-        await chrome.storage.local.remove(DRIVE_CONSENT_KEY);
-      } catch (e) {
-        // Drive permission not granted (checkbox left unticked on Google's consent screen): sync everything else,
-        // keep the media for later, and ask the user once to allow Google Drive.
-        if (/\b403\b|insufficient/i.test((e as Error).message)) {
-          await chrome.storage.local.set({ [DRIVE_CONSENT_KEY]: true });
-          uploads.left = 0;
-          return 'later';
-        }
-        throw e;
-      }
-      await quietly([db.media], () => db.media.update(m.id, { driveFileId: fileId }));
-      m = { ...m, driveFileId: fileId };
-    }
-    const { blob: _b, ...meta } = m;
-    row = { ...meta, thumb: m.thumb && m.thumb.length < 200_000 ? m.thumb : undefined };
-  }
   return { json: JSON.stringify(row), deleted: false };
 }
 
 /** Pushes dirty records until `deadline`. Returns the number written to the cloud. */
 export async function push(deadline = Date.now() + 60_000): Promise<number> {
   let n = 0;
-  const uploads = { left: UPLOADS_PER_ROUND };
   for (const d of await dirtyEntries()) {
     if (Date.now() > deadline) break;
     if (d.table !== 'settings' && !isSyncTable(d.table)) {
       await chrome.storage.local.remove(d.key);
       continue;
     }
-    const body = await serialize(d.table, d.id, uploads);
-    if (body === 'later') continue;
+    const body = await serialize(d.table, d.id);
     const res = await putRecordIfNewer({ table: d.table, id: d.id, ts: d.ts, ...body });
     const clear = async () => {
       // Only clear the mark if nothing changed again while we were uploading.
@@ -248,11 +212,6 @@ export async function push(deadline = Date.now() + 60_000): Promise<number> {
       }
     }
     // 'conflict': someone wrote at the same moment — keep the mark and try again next round.
-  }
-  for (const k of await keysWith(TRASH)) {
-    if (Date.now() > deadline) break;
-    await trashMedia(k.slice(TRASH.length));
-    await chrome.storage.local.remove(k);
   }
   return n;
 }
@@ -278,14 +237,7 @@ async function applyRemote(r: RemoteRecord, force = false): Promise<'applied' | 
     }
     await quietly([table], async () => {
       if (!row) await table.delete(r.id);
-      else {
-        if (r.table === 'media') {
-          const local = (await db.media.get(r.id)) as MediaItem | undefined;
-          // keep the downloaded file if it is still the same Drive file; others are fetched from Drive on use
-          if (local?.blob && local.driveFileId === row.driveFileId) row.blob = local.blob;
-        }
-        await table.put(row);
-      }
+      else await table.put(row);
     });
   } else return 'skipped';
   if (localTs && localTs <= r.ts) await chrome.storage.local.remove(key);
@@ -325,7 +277,7 @@ export function syncNow(budgetMs = 45_000): Promise<void> {
     if (!s) return;
     const state = await accountState(s.uid);
     if (state === 'switched') {
-      await chrome.storage.local.set({ [SYNC_STATUS_KEY]: { at: Date.now(), ok: false, error: 'This browser has data of another Google account — open Cloud & Sync to resolve' } });
+      await chrome.storage.local.set({ [SYNC_STATUS_KEY]: { at: Date.now(), ok: false, error: 'This browser has data of another account — open Cloud & Sync to resolve' } });
       return;
     }
     try {

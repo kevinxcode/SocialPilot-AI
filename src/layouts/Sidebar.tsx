@@ -2,6 +2,7 @@ import {
   BarChart3,
   BookOpen,
   Bot,
+  Camera,
   CalendarDays,
   Clock,
   Cloud,
@@ -27,6 +28,7 @@ export type PageId =
   | 'media'
   | 'topics'
   | 'groups'
+  | 'instagram'
   | 'accounts'
   | 'analytics'
   | 'brand'
@@ -44,6 +46,7 @@ export const NAV: { id: PageId; icon: LucideIcon }[] = [
   { id: 'topics', icon: Hash },
   { id: 'accounts', icon: Share2 },
   { id: 'groups', icon: Users },
+  { id: 'instagram', icon: Camera },
   { id: 'analytics', icon: BarChart3 },
   { id: 'brand', icon: BookOpen },
   { id: 'providers', icon: Bot },

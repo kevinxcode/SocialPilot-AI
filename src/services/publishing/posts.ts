@@ -37,17 +37,19 @@ export async function createDraft(p: NewPost): Promise<Post> {
     const m = await pickMedia(mediaTags(p.contentType, p.title));
     if (m) mediaIds = [m.id];
   }
+  // The fingerprint must describe the text that is really posted (links removed), or the feed check cannot find it.
+  const text = noLinkPlatform(p.platform) ? stripLinks(p.text) : p.text;
   const post: Post = {
     id: uid(),
     platform: p.platform,
     accountId: acc?.id ?? '',
     brandId: p.brandId,
     title: p.title,
-    text: noLinkPlatform(p.platform) ? stripLinks(p.text) : p.text,
+    text,
     mediaIds,
     groupId: p.groupId,
     status: 'draft',
-    fingerprint: fingerprint(p.text),
+    fingerprint: fingerprint(text),
     source: p.source ?? 'manual',
     attempts: 0,
     contentType: p.contentType,
@@ -61,5 +63,7 @@ export async function createDraft(p: NewPost): Promise<Post> {
 }
 
 export async function updatePostText(id: string, text: string): Promise<void> {
-  await db.posts.update(id, { text, fingerprint: fingerprint(text), updatedAt: Date.now() });
+  const post = await db.posts.get(id);
+  const sent = post && noLinkPlatform(post.platform) ? stripLinks(text) : text;
+  await db.posts.update(id, { text: sent, fingerprint: fingerprint(sent), updatedAt: Date.now() });
 }

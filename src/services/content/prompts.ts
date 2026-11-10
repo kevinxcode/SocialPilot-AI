@@ -34,13 +34,15 @@ export interface StudioInput {
   extra?: string;
 }
 
-const PLATFORM_RULES: Record<Platform, string> = {
+export const PLATFORM_RULES: Record<Platform, string> = {
   fbgroup:
     'Facebook Group: community post, 60–200 words, helpful and conversational, no hard selling, at most 2 hashtags, end with a question to start discussion. NO links or URLs at all. No markdown.',
   threads:
     'Threads: conversational, short paragraphs, max 500 characters for the whole caption INCLUDING hashtags and CTA. Use at most 3 hashtags. No markdown.',
   facebook:
     'Facebook Page: can be longer (ideally 80–250 words), skimmable short paragraphs, emojis sparingly, 3–6 hashtags at the end, a clear CTA without any link (e.g. "cari CuciQu Pro di Play Store"). NO links or URLs at all. No markdown.',
+  instagram:
+    'Instagram feed caption for a post with an image: strong first line (it is cut after ~125 characters), 40–150 words, short paragraphs, emojis welcome, a clear CTA like "link di bio" (links are NOT clickable in captions, so write NO URLs), 5–10 relevant hashtags at the very end (max 30). No markdown.',
 };
 
 export const langName = (l: Language) => (l === 'id' ? 'Indonesian (Bahasa Indonesia, natural, not stiff)' : 'English');
@@ -109,6 +111,20 @@ export function researchPrompt(kind: ResearchKind, language: Language, focus: st
       ? `Analyse ONLY the competitor content below: what topics, hooks, formats and CTAs they use, gaps we can fill, and post ideas for our brand. Do not claim anything not present in the source.\n\nSOURCE:\n${(source ?? '').slice(0, 12000)}`
       : 'Do not claim these are real-time trends. Base ideas on general industry knowledge and the brand knowledge base.',
     'Return ONLY JSON: {"ideas":[{"title":"<short title>","body":"<2-4 sentence explanation or plan detail>"}]} with 6–12 ideas.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** Instagram caption written by looking at the attached image (vision model). Answer is JSON. */
+export function instagramImagePrompt(language: Language, hint?: string): string {
+  return [
+    'Look carefully at the attached image. Write ONE Instagram feed caption for this brand that matches what the image shows.',
+    `Language: ${langName(language)}.`,
+    `Platform rules — ${PLATFORM_RULES.instagram}`,
+    'Describe what the image is about in the brand voice; do not invent features, prices or numbers that are neither visible in the image nor in the brand knowledge.',
+    hint?.trim() ? `Extra direction from the user: ${hint.trim()}` : '',
+    'Return ONLY JSON: {"caption": "the caption WITHOUT hashtags", "hashtags": ["#tag1", "#tag2", "..."]} with 5 to 10 relevant hashtags.',
   ]
     .filter(Boolean)
     .join('\n');

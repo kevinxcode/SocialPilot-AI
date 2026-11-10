@@ -3,6 +3,8 @@ import { runFindExisting, runPreflight, runPublish, runScrapeFeed, runScrapeGrou
 import { FACEBOOK } from '@/services/publishing/rpa/selectors/facebook';
 import { THREADS } from '@/services/publishing/rpa/selectors/threads';
 import { FBGROUP } from '@/services/publishing/rpa/selectors/fbgroup';
+import { INSTAGRAM } from '@/services/publishing/rpa/selectors/instagram';
+import { runInstagramFindPost, runInstagramPreflight, runInstagramPublish, runInstagramRecent } from '@/services/publishing/rpa/instagram';
 import type { RpaCommand } from '@/services/publishing/Publisher';
 import { runReply, findReply } from '@/services/publishing/rpa/reply';
 
@@ -12,7 +14,8 @@ if (!w.__socialpilotRpa) {
   chrome.runtime.onMessage.addListener((msg: RpaCommand & { __rpa?: true }, _sender, sendResponse) => {
     if (!msg?.__rpa) return false;
     const p = 'platform' in msg ? msg.platform : 'threads';
-    const cfg = p === 'facebook' ? FACEBOOK : p === 'fbgroup' ? FBGROUP : THREADS;
+    const cfg = p === 'facebook' ? FACEBOOK : p === 'fbgroup' ? FBGROUP : p === 'instagram' ? INSTAGRAM : THREADS;
+    const ig = p === 'instagram';
     const run = async () => {
       switch (msg.cmd) {
         case 'reply':
@@ -22,13 +25,15 @@ if (!w.__socialpilotRpa) {
         case 'ping':
           return { ok: true };
         case 'preflight':
-          return runPreflight(cfg, msg.account);
+          return ig ? runInstagramPreflight(cfg, msg.account) : runPreflight(cfg, msg.account);
         case 'publish':
-          return runPublish(cfg, msg.input);
+          return ig ? runInstagramPublish(cfg, msg.input) : runPublish(cfg, msg.input);
         case 'findExisting':
-          return runFindExisting(cfg, msg.fingerprint);
+          return ig ? runInstagramFindPost(msg.fingerprint, msg.since) : runFindExisting(cfg, msg.fingerprint);
         case 'scrapeFeed':
           return runScrapeFeed(cfg, msg.max);
+        case 'recentPosts':
+          return runInstagramRecent(cfg, msg.max);
         case 'scrapeGroups':
           return runScrapeGroups();
       }

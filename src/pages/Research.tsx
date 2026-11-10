@@ -70,6 +70,14 @@ export function ResearchPage() {
       else n.add(id);
       return n;
     });
+  const deleteSelected = async () => {
+    const ids = ideas.filter((i) => sel.has(i.id)).map((i) => i.id);
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} saved idea${ids.length > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    await db.ideas.bulkDelete(ids);
+    setSel(new Set());
+    toast(`Deleted ${ids.length} ideas`);
+  };
   const addToQueue = async () => {
     const ids = ideas.filter((i) => sel.has(i.id)).map((i) => i.id);
     if (!ids.length) return;
@@ -319,6 +327,14 @@ Source: ${url}` : "";
               {queuing !== null
                 ? `Generating… ${queuing}/${job?.total ?? 0}`
                 : `Add to queue (${sel.size * qPlatforms.size})`}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!sel.size || queuing !== null}
+              onClick={deleteSelected}
+              aria-label="Delete selected ideas"
+            >
+              <Trash2 className="h-4 w-4" /> Delete selected ({sel.size})
             </Button>
             {queuing !== null && (
               <Button variant="outline" onClick={() => sendToSw({ type: "stopIdeaJob" })}>

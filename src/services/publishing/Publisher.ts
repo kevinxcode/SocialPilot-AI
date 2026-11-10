@@ -22,6 +22,9 @@ export type RpaCommand =
   | { cmd: 'findReply'; targetUrl: string; profileUrl: string; fingerprint: string }
   | { cmd: 'preflight'; platform: Platform; account: { profileUrl: string; pageName?: string } }
   | { cmd: 'publish'; platform: Platform; input: { text: string; files: { name: string; type: string; dataUrl: string }[]; dryRun: boolean; pageName?: string; topic?: string } }
-  | { cmd: 'findExisting'; platform: Platform; fingerprint: string }
+  /** since (Instagram): ignore posts older than this time (ms) */
+  | { cmd: 'findExisting'; platform: Platform; fingerprint: string; since?: number }
   | { cmd: 'scrapeFeed'; platform: Platform; max: number }
-  | { cmd: 'scrapeGroups'; platform: Platform };
+  | { cmd: 'scrapeGroups'; platform: Platform }
+  /** Instagram: links of the newest posts on the profile grid */
+  | { cmd: 'recentPosts'; platform: Platform; max: number };

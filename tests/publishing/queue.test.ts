@@ -1,4 +1,4 @@
-import { schedulePost, cancel, processDue, recoverOnStartup, zonedToUtc, type QueueDeps , removeDuplicates } from '@/services/publishing/PublishingQueue';
+import { schedulePost, cancel, processDue, setPaused, recoverOnStartup, zonedToUtc, type QueueDeps , removeDuplicates } from '@/services/publishing/PublishingQueue';
 import { BACKOFF_MIN } from '@/services/publishing/RetryManager';
 import { db, resetDb } from '@/services/storage/db';
 import type { Publisher, PublishResult } from '@/services/publishing/Publisher';
@@ -31,7 +31,7 @@ function fakePublisher(results: (PublishResult | 'throw')[], found: { found: boo
 let notes: string[];
 function deps(pub: Publisher, extra: Partial<QueueDeps> = {}): QueueDeps {
   return {
-    publishers: { threads: pub, facebook: pub, fbgroup: pub },
+    publishers: { threads: pub, facebook: pub, fbgroup: pub, instagram: pub },
     notify: (t, m) => notes.push(`${t}: ${m}`),
     loadMedia: async () => [],
     ...extra,
@@ -74,6 +74,103 @@ test('schedule then process publishes once and records url', async () => {
   expect(p).toMatchObject({ status: 'published', url: 'https://t/1', attempts: 1 });
   expect(await db.queue.count()).toBe(0);
   expect(notes.join()).toMatch(/Published/);
+});
+
+test('media that cannot be loaded → nothing is posted; a plain retry (not "verifying")', async () => {
+  await addPost('m', { mediaIds: ['img1'] });
+  await schedulePost('m', new Date(T0));
+  const pub = fakePublisher([{ status: 'published' }]);
+  await processDue(T0 + 1000, deps(pub, { loadMedia: async () => { throw new Error('Media file not available on this device'); } }));
+  expect(pub.calls).toBe(0);
+  expect(await db.posts.get('m')).toMatchObject({ status: 'scheduled', error: 'Media file not available on this device' });
+});
+
+test('autopilot paused → its already-scheduled posts wait (nothing posted); manual posts still go; resume → posted', async () => {
+  const { updateSettings } = await import('@/services/storage/settings');
+  await updateSettings({ autopilot: { enabled: true, paused: true } });
+  await addPost('auto', { source: 'autopilot' });
+  await addPost('mine', { source: 'manual' });
+  await schedulePost('auto', new Date(T0));
+  await schedulePost('mine', new Date(T0));
+  const pub = fakePublisher([{ status: 'published' }]);
+  await processDue(T0 + 1000, deps(pub));
+  expect((await db.posts.get('auto'))?.status).toBe('scheduled');
+  expect((await db.posts.get('mine'))?.status).toBe('published');
+  await updateSettings({ autopilot: { paused: false } });
+  await processDue(T0 + 6 * 60 * MIN, deps(pub)); // well after the minimum gap between posts
+  expect((await db.posts.get('auto'))?.status).toBe('published');
+});
+
+test('pause / resume selected posts: a paused post is never published; resumed → published', async () => {
+  await addPost('a');
+  await schedulePost('a', new Date(T0));
+  expect(await setPaused(['a', 'missing'], true)).toBe(1);
+  const pub = fakePublisher([{ status: 'published' }]);
+  await processDue(T0 + 1000, deps(pub));
+  expect(pub.calls).toBe(0);
+  expect(await db.posts.get('a')).toMatchObject({ status: 'scheduled', paused: true });
+  expect(await setPaused(['a'], true)).toBe(0); // already paused
+  expect(await setPaused(['a'], false, T0 + 2000)).toBe(1);
+  expect((await db.posts.get('a'))?.paused).toBeUndefined();
+  await processDue(T0 + 10 * MIN, deps(pub));
+  expect((await db.posts.get('a'))?.status).toBe('published');
+});
+
+test('Instagram: at least 2 hours between two posts, whatever the general gap says', async () => {
+  // The queue stamps publishedAt with the real clock, so this test works relative to it.
+  const t = Date.now();
+  await addPost('ig1', { platform: 'instagram', mediaIds: ['img'], fingerprint: 'laundry rapi tanpa ribet bersama cuciqu' });
+  await addPost('ig2', { platform: 'instagram', mediaIds: ['img'], fingerprint: 'cuci kering setrika dalam satu hari saja' });
+  await schedulePost('ig1', new Date(t));
+  await schedulePost('ig2', new Date(t + MIN)); // after ig1, so the order is fixed
+  const pub = fakePublisher([{ status: 'published' }]);
+  await processDue(t + 2 * MIN, deps(pub));
+  expect((await db.posts.get('ig1'))?.status).toBe('published');
+  const ig2 = await db.posts.get('ig2');
+  expect(ig2).toMatchObject({ status: 'scheduled', error: 'Waiting: min 120 min gap after the last Instagram post' });
+  const publishedAt = (await db.posts.get('ig1'))!.publishedAt!;
+  expect(ig2!.nextRetryAt).toBe(publishedAt + 120 * MIN);
+  await processDue(publishedAt + 60 * MIN, deps(pub));
+  expect((await db.posts.get('ig2'))?.status).toBe('scheduled');
+  await processDue(publishedAt + 121 * MIN, deps(pub));
+  expect((await db.posts.get('ig2'))?.status).toBe('published');
+});
+
+test('Instagram cannot be scheduled without exactly one image', async () => {
+  await addPost('none', { platform: 'instagram' });
+  await addPost('two', { platform: 'instagram', mediaIds: ['a', 'b'] });
+  await expect(schedulePost('none', new Date(T0))).rejects.toThrow(/need an image/);
+  await expect(schedulePost('two', new Date(T0))).rejects.toThrow(/only one image/);
+  expect(await db.queue.count()).toBe(0);
+});
+
+test('Instagram: a caption too short to recognise on the profile cannot be scheduled', async () => {
+  await addPost('short', { platform: 'instagram', mediaIds: ['img'], fingerprint: 'promo' });
+  await expect(schedulePost('short', new Date(T0))).rejects.toThrow(/at least 20 letters/);
+});
+
+test('[review#1] Instagram post not found after Share is NEVER posted again automatically', async () => {
+  await addPost('igv', { platform: 'instagram', mediaIds: ['img'], fingerprint: 'laundry rapi tanpa ribet bersama cuciqu', status: 'verifying', attempts: 1 });
+  await db.queue.add({ id: 'qv', postId: 'igv', kind: 'post', platform: 'instagram', runAt: T0 });
+  const pub = fakePublisher([{ status: 'published' }], [{ found: false }]);
+  await processDue(T0, deps(pub));
+  expect(pub.calls).toBe(0);
+  expect(await db.posts.get('igv')).toMatchObject({ status: 'verifying', error: expect.stringMatching(/automatic resend disabled/) });
+  for (let i = 1; i <= 4; i++) await processDue(T0 + i * 31 * MIN, deps(pub));
+  expect(pub.calls).toBe(0);
+  expect(await db.posts.get('igv')).toMatchObject({ status: 'failed', error: expect.stringMatching(/Check your Instagram profile/) });
+});
+
+test('[review#5] a paused post keeps its scheduled time, and Resume makes it due at once', async () => {
+  await addPost('ps');
+  await schedulePost('ps', new Date(T0));
+  await setPaused(['ps'], true);
+  const pub = fakePublisher([{ status: 'published' }]);
+  await processDue(T0 + 1000, deps(pub));
+  await processDue(T0 + 6 * MIN, deps(pub));
+  expect((await db.posts.get('ps'))?.scheduledAt).toBe(T0);
+  await setPaused(['ps'], false, T0 + 7 * MIN);
+  expect((await db.queue.where('postId').equals('ps').first())?.runAt).toBe(T0 + 7 * MIN);
 });
 
 test('not due yet → nothing happens', async () => {
@@ -429,4 +526,113 @@ describe('duplicate guard', () => {
     expect(pub.calls).toBe(0);
     expect((await db.posts.get('dup'))?.status).toBe('cancelled');
   });
+});
+
+test('[review#2] the fingerprint describes the text that is really posted (links removed)', async () => {
+  const { createDraft, updatePostText } = await import('@/services/publishing/posts');
+  const p = await createDraft({ platform: 'instagram', text: 'cuciqu.com laundry rapi tanpa ribet setiap hari', mediaIds: ['m'], autoMedia: false });
+  expect(p.text).not.toContain('cuciqu.com');
+  expect(p.fingerprint).not.toContain('cuciqu com');
+  await updatePostText(p.id, 'www.cuciqu.id cucian wangi dan rapi setiap hari');
+  expect((await db.posts.get(p.id))?.fingerprint).toBe('cucian wangi dan rapi setiap hari');
+});
+
+test('"Publish now" skips the gap on Threads, but NOT on Instagram (2-hour minimum always applies)', async () => {
+  const t = Date.now();
+  for (const [id, platform, fp] of [['th1', 'threads', 'a'], ['th2', 'threads', 'b'], ['ig1', 'instagram', 'laundry rapi tanpa ribet bersama cuciqu'], ['ig2', 'instagram', 'cuci kering setrika dalam satu hari saja']] as const) {
+    await addPost(id, { platform, mediaIds: platform === 'instagram' ? ['img'] : [], fingerprint: fp });
+  }
+  const pub = fakePublisher([{ status: 'published' }]);
+  await schedulePost('th1', new Date(t));
+  await schedulePost('ig1', new Date(t));
+  await processDue(t + 1000, deps(pub));
+  await schedulePost('th2', new Date(t + 2000), { immediate: true });
+  await schedulePost('ig2', new Date(t + 2000), { immediate: true });
+  await processDue(t + 3000, deps(pub));
+  expect((await db.posts.get('th2'))?.status).toBe('published');
+  expect(await db.posts.get('ig2')).toMatchObject({ status: 'scheduled', error: expect.stringMatching(/120 min gap/) });
+});
+
+describe('automatic queue (no collisions)', () => {
+  test('posts piled on the same minute are spread at the platform gap; order and per-platform gaps kept', async () => {
+    const { autoReorder } = await import('@/services/publishing/PublishingQueue');
+    for (const id of ['t1', 't2', 't3']) {
+      await addPost(id);
+      await schedulePost(id, new Date(T0));
+    }
+    await addPost('g1', { platform: 'fbgroup', groupId: 'g' });
+    await addPost('g2', { platform: 'fbgroup', groupId: 'h' });
+    await schedulePost('g1', new Date(T0));
+    await schedulePost('g2', new Date(T0));
+    expect(await autoReorder(T0)).toBe(3); // t2, t3, g2 moved; t1 and g1 keep T0
+    const at = async (id: string) => (await db.posts.get(id))!.scheduledAt;
+    expect([await at('t1'), await at('t2'), await at('t3')]).toEqual([T0, T0 + 60 * MIN, T0 + 120 * MIN]); // default gap 60
+    expect([await at('g1'), await at('g2')]).toEqual([T0, T0 + 30 * MIN]); // group gap 30
+    expect((await db.queue.where('postId').equals('t3').first())?.runAt).toBe(T0 + 120 * MIN);
+    expect(await autoReorder(T0)).toBe(0); // already in order
+  });
+
+  test('a post is never moved EARLIER than its own time; paused posts are not touched', async () => {
+    const { autoReorder } = await import('@/services/publishing/PublishingQueue');
+    await addPost('late');
+    await schedulePost('late', new Date(T0 + 10 * 60 * MIN));
+    await addPost('held');
+    await schedulePost('held', new Date(T0));
+    await setPaused(['held'], true);
+    await autoReorder(T0);
+    expect((await db.posts.get('late'))?.scheduledAt).toBe(T0 + 10 * 60 * MIN);
+    expect((await db.posts.get('held'))?.scheduledAt).toBe(T0);
+  });
+
+  test('running it every scheduler cycle never starves a due post (it still gets published)', async () => {
+    const { autoReorder } = await import('@/services/publishing/PublishingQueue');
+    await addPost('due');
+    await schedulePost('due', new Date(T0 - 5 * MIN)); // overdue
+    const pub = fakePublisher([{ status: 'published' }]);
+    for (let i = 0; i < 3; i++) await autoReorder(T0 + i * MIN);
+    await autoReorder(T0 + 3 * MIN);
+    await processDue(T0 + 3 * MIN, deps(pub));
+    expect((await db.posts.get('due'))?.status).toBe('published');
+  });
+});
+
+describe('user actions on a "verifying" post', () => {
+  test('Mark as published: moves it to published and stops the checks; never while it is being worked on', async () => {
+    const { markPublishedByUser } = await import('@/services/publishing/PublishingQueue');
+    await addPost('v1', { status: 'verifying', attempts: 1 });
+    await db.queue.add({ id: 'q1', postId: 'v1', kind: 'post', platform: 'threads', runAt: T0 });
+    await addPost('v2', { status: 'verifying', attempts: 1 });
+    await db.queue.add({ id: 'q2', postId: 'v2', kind: 'post', platform: 'threads', runAt: T0, lockedUntil: Date.now() + 60_000 });
+    await addPost('done', { status: 'published', publishedAt: 5 });
+    expect(await markPublishedByUser(['v1', 'v2', 'done'])).toBe(1);
+    expect(await db.posts.get('v1')).toMatchObject({ status: 'published', note: 'Marked as published by you' });
+    expect(await db.queue.get('q1')).toBeUndefined();
+    expect((await db.posts.get('v2'))?.status).toBe('verifying'); // locked → untouched
+    expect((await db.posts.get('done'))?.publishedAt).toBe(5);
+  });
+
+  test('Cancel works for a verifying post (nothing is posted), but not while a check is running', async () => {
+    await addPost('v3', { status: 'verifying', attempts: 1 });
+    await db.queue.add({ id: 'q3', postId: 'v3', kind: 'post', platform: 'threads', runAt: T0 });
+    await cancel('v3');
+    expect((await db.posts.get('v3'))?.status).toBe('cancelled');
+    expect(await db.queue.get('q3')).toBeUndefined();
+    await addPost('v4', { status: 'verifying', attempts: 1 });
+    await db.queue.add({ id: 'q4', postId: 'v4', kind: 'post', platform: 'threads', runAt: T0, lockedUntil: Date.now() + 60_000 });
+    await expect(cancel('v4')).rejects.toThrow(/being published right now/);
+  });
+});
+
+test('Delete: a "verifying" post waiting for its next check can be deleted; not while it is being worked on', async () => {
+  const { deletePost } = await import('@/pages/PostEditor');
+  await addPost('vd', { status: 'verifying', attempts: 2 });
+  await db.queue.add({ id: 'qd', postId: 'vd', kind: 'post', platform: 'instagram', runAt: T0 + 30 * MIN });
+  await deletePost((await db.posts.get('vd'))!);
+  expect(await db.posts.get('vd')).toBeUndefined();
+  expect(await db.queue.get('qd')).toBeUndefined();
+  await addPost('busy', { status: 'verifying', attempts: 2 });
+  await db.queue.add({ id: 'qb', postId: 'busy', kind: 'post', platform: 'instagram', runAt: T0, lockedUntil: Date.now() + 60_000 });
+  await expect(deletePost((await db.posts.get('busy'))!)).rejects.toThrow(/right now/);
+  await addPost('proc', { status: 'processing' });
+  await expect(deletePost((await db.posts.get('proc'))!)).rejects.toThrow(/right now/);
 });

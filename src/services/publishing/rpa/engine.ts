@@ -3,7 +3,7 @@
  * Pure DOM logic (no chrome.* APIs) so it is unit-testable against fixtures.
  */
 import { normalizeText } from '../fingerprint';
-import { attachFiles, click, dataUrlToFile, findBySelectors, humanDelay, readEditorText, typeText, waitFor } from './dom';
+import { attachFiles, click, closeSuggestions, dataUrlToFile, findBySelectors, humanDelay, readEditorText, typeText, waitFor } from './dom';
 import type { PlatformSelectors } from './selectors/types';
 
 export interface EngineOpts {
@@ -25,7 +25,8 @@ export interface PublishInput {
   /** Threads topic / community tag; best effort */
   topic?: string;
 }
-export type EngineResult = { status: 'clicked'; pending?: boolean; topicSet?: boolean; topicIssue?: string } | { status: 'dry-run'; topicIssue?: string } | { status: 'unknown'; reason: string } | { status: 'failed'; reason: string };
+/** `note`: extra evidence for the user (e.g. Instagram: how the caption got into the editor and its counter). */
+export type EngineResult = { status: 'clicked'; pending?: boolean; topicSet?: boolean; topicIssue?: string; note?: string } | { status: 'dry-run'; topicIssue?: string; note?: string } | { status: 'unknown'; reason: string } | { status: 'failed'; reason: string };
 
 const T = (o: EngineOpts, ms: number) => Math.min(ms, o.timeoutMs ?? ms);
 
@@ -151,6 +152,7 @@ export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o:
       reason: `Text could not be entered exactly into the composer (expected ${input.text.replace(/\s+/g, ' ').trim().length} chars, editor shows ${seen.length}: "${seen.slice(0, 80)}…")`,
     };
   }
+  await closeSuggestions(box, input.text); // a trailing #hashtag opens a suggestion list that blocks Post
   let topicSet: boolean | undefined;
   let topicIssue: string | undefined;
   if (input.topic && cfg.topicField) {

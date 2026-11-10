@@ -3,7 +3,7 @@ import { ExternalLink } from 'lucide-react';
 import { Badge, Button, Dialog, Field, Input, Textarea, useToast } from '@/components/ui';
 import { useSettings } from '@/hooks/useSettings';
 import { db } from '@/services/storage/db';
-import { cancel, schedulePost, zonedToUtc } from '@/services/publishing/PublishingQueue';
+import { cancel, isBeingWorkedOn, schedulePost, zonedToUtc } from '@/services/publishing/PublishingQueue';
 import { createDraft, updatePostText } from '@/services/publishing/posts';
 import { validatePost, visibleLength, LIMITS } from '@/services/content/validate';
 import { sendToSw } from '@/background/messages';
@@ -21,13 +21,36 @@ export const STATUS_TONE: Record<PostStatus, 'default' | 'success' | 'warning' |
   cancelled: 'default',
 };
 
-export function StatusBadge({ post }: { post: Post }) {
+/** A waiting post that will not be published for now: paused by the user, or an autopilot post while autopilot is paused/off. */
+export function isOnHold(post: Post, autopilotHeld = false): boolean {
+  return post.status === 'scheduled' && (!!post.paused || (post.source === 'autopilot' && autopilotHeld));
+}
+
+/** One status per post: a held post shows "paused" instead of "scheduled" (never both). */
+export function StatusBadge({ post, autopilotHeld = false }: { post: Post; autopilotHeld?: boolean }) {
+  const held = isOnHold(post, autopilotHeld);
   return (
     <span className="inline-flex items-center gap-1">
-      <Badge tone={STATUS_TONE[post.status]}>{post.status}</Badge>
+      {held ? <Badge tone="warning">paused</Badge> : <Badge tone={STATUS_TONE[post.status]}>{post.status}</Badge>}
       {post.source === 'autopilot' && <Badge tone="info">Auto</Badge>}
     </span>
   );
+}
+
+/**
+ * Plain-language "Details" for the post lists: what happens next, and why.
+ * Old errors of a post that will be retried are labelled as the LAST attempt, so they are not read as the current state.
+ */
+export function postDetail(post: Post, fmt: (ms?: number) => string, autopilotHeld = false): { text: string; tone: 'muted' | 'warn' | 'error' } {
+  if (post.status === 'scheduled' && post.paused) return { text: 'Paused by you — not published until you select it and click Resume', tone: 'warn' };
+  if (isOnHold(post, autopilotHeld)) return { text: 'Autopilot is paused — this post waits until autopilot runs again', tone: 'warn' };
+  const err = post.error ?? '';
+  if (post.status === 'scheduled' && err.startsWith('Waiting:')) return { text: err, tone: 'muted' };
+  if (post.status === 'scheduled' && err) return { text: `Last attempt failed: ${err}${post.nextRetryAt ? ` · next try ${fmt(post.nextRetryAt)}` : ''}`, tone: 'warn' };
+  if (post.status === 'failed') return { text: err || 'Failed', tone: 'error' };
+  if (post.status === 'verifying') return { text: err || 'Checking whether it was already posted before trying again', tone: 'warn' };
+  if (post.status === 'processing') return { text: 'Being published now…', tone: 'muted' };
+  return { text: err || post.note || (post.nextRetryAt ? `next try ${fmt(post.nextRetryAt)}` : ''), tone: 'muted' };
 }
 
 const editable = (s: PostStatus) => s === 'draft' || s === 'scheduled' || s === 'failed' || s === 'cancelled';
@@ -36,9 +59,15 @@ export async function duplicatePost(p: Post): Promise<Post> {
   return createDraft({ platform: p.platform, text: p.text, brandId: p.brandId, title: p.title, mediaIds: p.mediaIds, contentType: p.contentType });
 }
 
+/**
+ * Deletes the post from SocialPilot. Refused only while it is really being published or checked right now; a post
+ * that is just waiting for its next feed check ('verifying') can be deleted (it is not posted again — a copy that is
+ * already live on the platform stays there).
+ */
 export async function deletePost(p: Post): Promise<void> {
-  if (p.status === 'processing' || p.status === 'verifying') throw new Error('Post is being published; try again later');
   await db.transaction('rw', db.posts, db.queue, async () => {
+    const cur = await db.posts.get(p.id);
+    if (cur?.status === 'processing' || (await isBeingWorkedOn(p.id))) throw new Error('Post is being published right now; try again in a minute');
     await db.queue.where('postId').equals(p.id).delete();
     await db.posts.delete(p.id);
   });
@@ -168,7 +197,7 @@ export function PostEditor({ post, onClose }: { post: Post | null; onClose: () =
           size="sm"
           variant="ghost"
           className="text-red-500"
-          onClick={() => confirm('Delete this post?') && run(() => deletePost(post), 'Deleted')}
+          onClick={() => confirm(post.status === 'verifying' ? 'Delete this post from SocialPilot? It will not be posted again. If it is already live on the platform, it stays there — delete it there yourself if needed.' : 'Delete this post?') && run(() => deletePost(post), 'Deleted')}
         >
           Delete
         </Button>

@@ -119,7 +119,7 @@ describe('queue — group pacing', () => {
     };
     return p;
   };
-  const deps = (p: Publisher): QueueDeps => ({ publishers: { threads: p, facebook: p, fbgroup: p }, notify: () => undefined, loadMedia: async () => [] });
+  const deps = (p: Publisher): QueueDeps => ({ publishers: { threads: p, facebook: p, fbgroup: p, instagram: p }, notify: () => undefined, loadMedia: async () => [] });
   const add = (id: string, x: Partial<Post>) =>
     db.posts.put({ ...gpost({ id, fingerprint: id, status: 'draft' }), ...x });
 

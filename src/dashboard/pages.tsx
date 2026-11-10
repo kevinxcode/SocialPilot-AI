@@ -15,6 +15,7 @@ import { CalendarPage } from '@/pages/Calendar';
 import { DashboardPage } from '@/pages/Dashboard';
 import { AnalyticsPage } from '@/pages/Analytics';
 import { CloudPage } from '@/pages/Cloud';
+import { InstagramPage } from '@/pages/Instagram';
 
 type Render = (navigate: (p: PageId) => void) => ReactNode;
 
@@ -27,6 +28,7 @@ export const PAGES: Partial<Record<PageId, Render>> = {
   media: () => <MediaLibraryPage />,
   topics: () => <TopicsPage />,
   groups: () => <GroupsPage />,
+  instagram: () => <InstagramPage />,
   accounts: () => <SocialAccountsPage />,
   scheduled: () => <ScheduledPostsPage />,
   calendar: () => <CalendarPage />,

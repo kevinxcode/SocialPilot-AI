@@ -11,7 +11,7 @@ export interface Sel {
 }
 
 export interface PlatformSelectors {
-  platform: 'threads' | 'facebook' | 'fbgroup';
+  platform: 'threads' | 'facebook' | 'fbgroup' | 'instagram';
   version: string;
   /** any match ⇒ logged out */
   loggedOut: Sel[];
@@ -36,6 +36,14 @@ export interface PlatformSelectors {
   /** suggestions shown after typing a topic */
   topicOption?: Sel[];
   postButton: Sel[];
+  /** Instagram: item in the "Create" menu that opens the feed-post dialog */
+  createMenuItem?: Sel[];
+  /** Instagram: "video posts are now shared as reels" notice and its OK button */
+  reelsNoticeOk?: Sel[];
+  /** Instagram: confirmation that the post was shared */
+  sharedNotice?: Sel[];
+  /** Instagram: message that sharing failed */
+  shareError?: Sel[];
   /** containers holding one post each in the profile/page feed */
   postContainer: string;
   /** regex source for permalink hrefs */

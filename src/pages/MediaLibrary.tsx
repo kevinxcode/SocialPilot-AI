@@ -11,7 +11,7 @@ export const SUGGESTED_FOLDER = 'C:\\locale\\intelij\\londy-artifacts-marketing\
 export function MediaThumb({ m, className }: { m: MediaItem; className?: string }) {
   const [url, setUrl] = useState<string | undefined>(m.thumb);
   useEffect(() => {
-    if (m.thumb || !m.type.startsWith('image/') || !m.blob) return; // no local copy yet (file is in Google Drive)
+    if (m.thumb || !m.type.startsWith('image/') || !m.blob) return; // no local copy yet (file missing)
     const u = URL.createObjectURL(m.blob);
     setUrl(u);
     return () => URL.revokeObjectURL(u);

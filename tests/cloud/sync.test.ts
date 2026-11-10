@@ -15,14 +15,9 @@ vi.mock('@/services/cloud/firestore', () => ({
     [...remote.values()].filter((r) => !since || r.serverTs! > since).sort((a, b) => a.serverTs!.localeCompare(b.serverTs!)),
   ),
 }));
-vi.mock('@/services/cloud/drive', () => ({
-  uploadMedia: vi.fn(async () => 'DRIVE1'),
-  trashMedia: vi.fn(async () => undefined),
-}));
 
 import { accountState, firstSync, installSyncHooks, markSettingsDirty, pull, push, wipeLocalSyncedData } from '@/services/cloud/sync';
 import { quietly } from '@/services/cloud/quiet';
-import { trashMedia, uploadMedia } from '@/services/cloud/drive';
 import { db, resetDb } from '@/services/storage/db';
 import { getSettings, updateSettings } from '@/services/storage/settings';
 import type { Post } from '@/types/models';
@@ -39,7 +34,6 @@ beforeEach(async () => {
   await resetDb();
   await chrome.storage.local.clear();
   remote.clear();
-  vi.mocked(uploadMedia).mockClear();
 });
 
 test('local changes are pushed; the dirty mark is cleared', async () => {
@@ -135,23 +129,19 @@ test('[review#7] another Google account is detected; wiping removes local data a
   expect(await accountState('u2')).toBe('first');
 });
 
-test('media: file to Drive, metadata to Firestore; a replaced file is uploaded again; delete trashes the Drive file', async () => {
+
+
+test('media stays on this device: adding, replacing or deleting a file never reaches the cloud', async () => {
   await db.media.add({ id: 'm1', name: 'a.png', type: 'image/png', size: 3, blob: new Blob(['png']), tags: [], usedCount: 0, createdAt: 1 });
-  await flush();
-  await push();
-  const meta = JSON.parse(remote.get('media__m1')!.json);
-  expect(meta).toMatchObject({ id: 'm1', driveFileId: 'DRIVE1' });
-  expect(meta.blob).toBeUndefined();
-  expect(await dirtyKeys()).toEqual([]); // storing the Drive id is a quiet write
   await db.media.update('m1', { blob: new Blob(['new']) });
+  await db.posts.add(post('p9', { mediaIds: ['m1'] }));
   await flush();
-  expect((await db.media.get('m1'))?.driveFileId).toBeUndefined();
   await push();
-  expect(uploadMedia).toHaveBeenCalledTimes(2);
+  expect(remote.has('posts__p9')).toBe(true); // the post (with its media id) is synced
+  expect([...remote.keys()].some((k) => k.startsWith('media__'))).toBe(false);
   await db.media.delete('m1');
   await flush();
-  await push();
-  expect(trashMedia).toHaveBeenCalledWith('DRIVE1');
+  expect(await dirtyKeys()).toEqual([]);
 });
 
 test('settings: a pulled change is not pushed back; a real local change is; Ollama address stays local', async () => {
@@ -171,12 +161,9 @@ test('settings: a pulled change is not pushed back; a real local change is; Olla
   expect(JSON.parse(remote.get('settings__main')!.json).minGapMinutes).toBe(45);
 });
 
-test('push is time-boxed and uploads at most 5 media files per round', async () => {
-  for (let i = 0; i < 7; i++) await db.media.add({ id: `m${i}`, name: `${i}.png`, type: 'image/png', size: 1, blob: new Blob(['x']), tags: [], usedCount: 0, createdAt: i });
+test('push is time-boxed: a passed deadline does nothing and keeps the marks', async () => {
+  await db.posts.add(post('t1'));
   await flush();
-  await push();
-  expect(uploadMedia).toHaveBeenCalledTimes(5);
-  await push();
-  expect(uploadMedia).toHaveBeenCalledTimes(7);
-  expect(await push(Date.now() - 1)).toBe(0); // deadline already passed → nothing done
+  expect(await push(Date.now() - 1)).toBe(0);
+  expect(await dirtyKeys()).toContain('dirty:posts:t1');
 });

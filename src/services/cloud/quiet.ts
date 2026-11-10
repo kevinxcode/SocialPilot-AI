@@ -1,5 +1,5 @@
 /**
- * Writes made BY the sync engine (applying remote data, caching a Drive download, storing a Drive id) must not be
+ * Writes made BY the sync engine (applying remote data, caching a download) must not be
  * marked as local edits. The marker lives on the Dexie transaction, so unrelated writes running at the same time in
  * the same context are still tracked.
  */

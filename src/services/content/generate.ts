@@ -1,8 +1,8 @@
 import { aiRouter, type GenerateRequest, type GenerateResult } from '@/services/ai/AIRouter';
 import type { Language, Platform } from '@/types/models';
 import { buildBrandContext } from './brandContext';
-import { parseIdeas, parseVariations, type Variation } from './parse';
-import { researchPrompt, studioPrompt, transformPrompt, type ResearchKind, type StudioInput, type TransformAction } from './prompts';
+import { extractJson, normalizeHashtags, parseIdeas, parseVariations, type Variation } from './parse';
+import { instagramImagePrompt, researchPrompt, studioPrompt, transformPrompt, type ResearchKind, type StudioInput, type TransformAction } from './prompts';
 
 export interface RouterLike {
   generate(req: GenerateRequest, onToken?: (t: string) => void): Promise<GenerateResult>;
@@ -70,4 +70,43 @@ export async function research(
     signal: deps.signal,
   });
   return parseIdeas(r.text);
+}
+
+/** Parses the vision model's answer: JSON {caption, hashtags} — or, if a model ignores JSON, the plain text. */
+export function parseImageCaption(text: string): { caption: string; hashtags: string[] } {
+  const j = extractJson(text) as { caption?: unknown; hashtags?: unknown } | undefined;
+  if (j && typeof j === 'object' && typeof j.caption === 'string' && j.caption.trim()) {
+    const tags = normalizeHashtags(j.hashtags).slice(0, 30);
+    // A model may also put hashtags inside the caption: keep them out of the body, merged into the list.
+    const inline = j.caption.match(/#[\p{L}\p{N}_]+/gu) ?? [];
+    const caption = j.caption.replace(/(\s*#[\p{L}\p{N}_]+)+\s*$/u, '').trim();
+    return { caption, hashtags: [...new Set([...tags, ...inline])].slice(0, 30) };
+  }
+  const plain = text.replace(/^```\w*\n?|```$/g, '').trim();
+  if (!plain) throw new Error('The AI returned an empty caption — try again or pick another model.');
+  const hashtags = [...new Set(plain.match(/#[\p{L}\p{N}_]+/gu) ?? [])].slice(0, 30);
+  return { caption: plain.replace(/#[\p{L}\p{N}_]+/gu, '').replace(/[ \t]+\n/g, '\n').trim(), hashtags };
+}
+
+/**
+ * Instagram caption + hashtags generated FROM THE IMAGE (needs a model with vision).
+ * `imageDataUrl` should already be downscaled (see shrinkImage) to keep the request small.
+ */
+export async function generateInstagramCaption(
+  imageDataUrl: string,
+  opts: { brandId: string; language: Language; hint?: string },
+  deps: Deps = {},
+): Promise<{ caption: string; hashtags: string[]; meta: GenerateResult }> {
+  const router = deps.router ?? aiRouter;
+  const r = await router.generate({
+    purpose: deps.purpose ?? 'interactive',
+    needsVision: true,
+    messages: [
+      { role: 'system', content: (await buildBrandContext(opts.brandId)) + SYSTEM_SUFFIX },
+      { role: 'user', content: instagramImagePrompt(opts.language, opts.hint), images: [imageDataUrl] },
+    ],
+    signal: deps.signal,
+    temperature: 0.8,
+  });
+  return { ...parseImageCaption(r.text), meta: { ...r, text: '' } };
 }

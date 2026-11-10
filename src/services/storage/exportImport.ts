@@ -81,7 +81,8 @@ export async function importAll(file: Blob): Promise<{ posts: number; media: num
   const media: MediaItem[] = [];
   for (const m of parsed.media) {
     const { data, ...meta } = m as { data?: string } & Record<string, unknown>;
-    media.push({ ...(meta as unknown as MediaItem), blob: data ? await fromDataUrl(data) : undefined });
+    if (!data) continue; // an item without its file cannot be used
+    media.push({ ...(meta as unknown as MediaItem), blob: await fromDataUrl(data) });
   }
   await db.transaction('rw', TABLES.map((t) => db.table(t)), async () => {
     for (const t of DATA_TABLES) {

@@ -1,5 +1,5 @@
 import { noLinkPlatform, stripLinks } from '@/services/content/noLinks';
-import { db } from '@/services/storage/db';
+import { db, log } from '@/services/storage/db';
 import type { Account, Platform, Post } from '@/types/models';
 import type { Publisher, PublishResult } from '../Publisher';
 import type { EngineResult, PreflightResult, ScrapedPost } from './engine';
@@ -7,6 +7,8 @@ import { TabDriver, exclusive } from './tabDriver';
 import { canonicalThreadUrl } from '@/services/content/comments';
 
 const CONFIRM_WINDOW_MS = 90_000;
+/** How many of the newest Instagram posts are opened to look for ours. */
+const INSTAGRAM_RECENT_CHECK = 6;
 
 async function blobToDataUrl(b: Blob): Promise<string> {
   const buf = new Uint8Array(await new Response(b).arrayBuffer());
@@ -42,7 +44,8 @@ export class RpaPublisher implements Publisher {
 
   private async account(): Promise<Account> {
     const acc = await db.accounts.where('platform').equals(this.platform).first();
-    if (!acc?.profileUrl) throw new Error(`No ${this.platform === 'threads' ? 'Threads account' : 'Facebook Page'} configured in Social Accounts`);
+    const what = this.platform === 'threads' ? 'Threads account' : this.platform === 'instagram' ? 'Instagram account' : 'Facebook Page';
+    if (!acc?.profileUrl) throw new Error(`No ${what} configured in Social Accounts`);
     return acc;
   }
 
@@ -77,8 +80,12 @@ export class RpaPublisher implements Publisher {
       let keepOpen = false;
       let commandSent = false;
       try {
+        // Instagram cannot post text only: refuse before opening anything.
+        if (this.platform === 'instagram' && media.length === 0) return { status: 'failed', reason: 'Instagram posts need an image or video — add one from the Media Library' };
+        if (this.platform === 'instagram' && post.replyTo) return { status: 'failed', reason: 'Replies are not supported on Instagram' };
         const acc = await this.target(post);
         if (post.replyTo && acc.id !== post.accountId) return { status: 'failed', reason: 'Reply account changed; skipped' };
+        const startedAt = Date.now(); // our post cannot be older than this
         const pre = await this.preflightOn(acc);
         let tabId = pre.tabId;
         const res = pre.res;
@@ -106,15 +113,19 @@ export class RpaPublisher implements Publisher {
         });
         if (r.status === 'dry-run') {
           keepOpen = true; // leave the filled composer for the user to inspect
+          if (r.note) return { status: 'dry-run', note: r.note };
           return { status: 'dry-run', note: post.topic ? (r.topicIssue ? `Topic "${post.topic}" not set: ${r.topicIssue}` : `Topic "${post.topic}" set`) : 'No topic chosen' };
         }
         if (r.status === 'failed') return { status: 'failed', reason: r.reason };
+        // Evidence written immediately after Share (survives a closed tab during the profile check).
+        if (r.status === 'clicked' && r.note) await log('info', 'publish', `${this.platform} ${post.id}: shared — ${r.note}`).catch(() => undefined);
         if (r.status === 'clicked' && r.pending) return { status: 'published', note: 'Pending admin approval in the group' };
         // clicked or unknown: confirm on the feed before claiming success
         const found = post.replyTo
           ? await this.driver.send<{ found: boolean; url?: string }>(tabId, { cmd: 'findReply', targetUrl: post.replyTo, profileUrl: acc.profileUrl, fingerprint: post.fingerprint })
-          : await this.confirm(acc, post.fingerprint);
+          : await this.confirm(acc, post.fingerprint, startedAt);
         if (found.found && 'pending' in found && found.pending) return { status: 'published', note: 'Pending admin approval in the group' };
+        if (found.found && r.status === 'clicked' && r.note) return { status: 'published', url: found.url, note: r.note };
         if (found.found) return { status: 'published', url: found.url, ...(post.topic && r.status === 'clicked' && r.topicSet === false ? { note: `Topic "${post.topic}" not set: ${r.topicIssue ?? 'Threads UI'}` } : {}) };
         return { status: 'unknown', reason: r.status === 'unknown' ? r.reason : 'Post not yet visible on the profile/page feed' };
       } catch (e) {
@@ -136,20 +147,44 @@ export class RpaPublisher implements Publisher {
     });
   }
 
-  /** Feed check. Groups: posts waiting for admin approval are only visible on "my pending content". */
-  private async lookFor(acc: Account, fp: string): Promise<{ found: boolean; url?: string; pending?: boolean }> {
+  /**
+   * Feed check. Groups: besides the group feed, "Your content" in the group is checked —
+   * Pending (waiting for admin approval) and Published (approved; in a busy group it may be far down the feed).
+   * Found in either one counts as success.
+   */
+  private async lookFor(acc: Account, fp: string, since?: number): Promise<{ found: boolean; url?: string; pending?: boolean }> {
+    if (this.platform === 'instagram') return this.lookForInstagram(acc, fp, since);
     const tabId = await this.driver.open(acc.profileUrl);
     const r = await this.driver.send<{ found: boolean; url?: string }>(tabId, { cmd: 'findExisting', platform: this.platform, fingerprint: fp });
     if (r.found || this.platform !== 'fbgroup') return r;
-    const pendingTab = await this.driver.open(`${acc.profileUrl.replace(/\/$/, '')}/my_pending_content`);
+    const base = acc.profileUrl.replace(/\/$/, '');
+    const pendingTab = await this.driver.open(`${base}/my_pending_content`);
     const p = await this.driver.send<{ found: boolean; url?: string }>(pendingTab, { cmd: 'findExisting', platform: this.platform, fingerprint: fp });
-    return p.found ? { found: true, pending: true } : { found: false };
+    if (p.found) return { found: true, pending: true };
+    const postedTab = await this.driver.open(`${base}/my_posted_content`);
+    const done = await this.driver.send<{ found: boolean; url?: string }>(postedTab, { cmd: 'findExisting', platform: this.platform, fingerprint: fp });
+    return done.found ? { found: true, url: done.url } : { found: false };
   }
 
-  private async confirm(acc: Account, fp: string): Promise<{ found: boolean; url?: string; pending?: boolean }> {
+  /**
+   * Instagram's profile grid shows only images, so the newest posts are opened one by one and their caption is
+   * compared with the post's fingerprint.
+   */
+  private async lookForInstagram(acc: Account, fp: string, since?: number, newest = INSTAGRAM_RECENT_CHECK): Promise<{ found: boolean; url?: string }> {
+    const tabId = await this.driver.open(acc.profileUrl);
+    const { urls } = await this.driver.send<{ urls: string[] }>(tabId, { cmd: 'recentPosts', platform: 'instagram', max: newest });
+    for (const url of urls ?? []) {
+      const postTab = await this.driver.open(url);
+      const r = await this.driver.send<{ found: boolean }>(postTab, { cmd: 'findExisting', platform: 'instagram', fingerprint: fp, since });
+      if (r.found) return { found: true, url };
+    }
+    return { found: false };
+  }
+
+  private async confirm(acc: Account, fp: string, since?: number): Promise<{ found: boolean; url?: string; pending?: boolean }> {
     const end = Date.now() + this.confirmWindowMs;
     do {
-      const r = await this.lookFor(acc, fp);
+      const r = await this.lookFor(acc, fp, since);
       if (r.found) return r;
       if (Date.now() + 15_000 > end) break;
       await new Promise((res) => setTimeout(res, 15_000));
@@ -223,4 +258,5 @@ export const publishers: Record<Platform, Publisher> = {
   threads: new RpaPublisher('threads'),
   facebook: new RpaPublisher('facebook'),
   fbgroup: new RpaPublisher('fbgroup'),
+  instagram: new RpaPublisher('instagram'),
 };

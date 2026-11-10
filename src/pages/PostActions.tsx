@@ -47,7 +47,7 @@ export function MediaPicker({ value, onChange, max = 4 }: { value: string[]; onC
       <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
         <ImagePlus className="h-3.5 w-3.5" /> Media {value.length > 0 && <Badge tone="info">{value.length}</Badge>}
       </Button>
-      <Dialog open={open} onClose={() => setOpen(false)} title={`Attach images (max ${max})`}>
+      <Dialog open={open} onClose={() => setOpen(false)} title={max === 1 ? 'Choose an image (click again to remove)' : `Attach images (max ${max}) — click again to remove`}>
         {images.length === 0 ? (
           <p className="text-sm text-muted-foreground">No images in the Media Library yet.</p>
         ) : (
@@ -59,10 +59,26 @@ export function MediaPicker({ value, onChange, max = 4 }: { value: string[]; onC
                   key={m.id}
                   type="button"
                   aria-pressed={sel}
-                  className={`overflow-hidden rounded-md border-2 ${sel ? 'border-primary' : 'border-transparent'}`}
-                  onClick={() => onChange(sel ? value.filter((x) => x !== m.id) : value.length < max ? [...value, m.id] : value)}
+                  className={`relative overflow-hidden rounded-md border-2 ${sel ? 'border-primary ring-2 ring-primary/40' : 'border-transparent'}`}
+                  title={sel ? 'Click again to remove' : undefined}
+                  onClick={() =>
+                    onChange(
+                      sel
+                        ? value.filter((x) => x !== m.id) // click a selected image again → remove it
+                        : max === 1
+                          ? [m.id] // only one allowed → the new one replaces the old one
+                          : value.length < max
+                            ? [...value, m.id]
+                            : value,
+                    )
+                  }
                 >
                   <MediaThumb m={m} className="h-24 w-full" />
+                  {sel && (
+                    <span className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground shadow">
+                      ✓
+                    </span>
+                  )}
                   <div className="truncate px-1 text-[10px]">{m.usedCount ? `used ${m.usedCount}× · ` : ''}{m.name}</div>
                 </button>
               );
@@ -74,7 +90,14 @@ export function MediaPicker({ value, onChange, max = 4 }: { value: string[]; onC
             <Upload className="h-4 w-4" /> {uploading ? 'Uploading…' : 'Upload from computer'}
           </Button>
           <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => upload(e.target.files)} />
-          <Button onClick={() => setOpen(false)}>Done</Button>
+          <div className="flex gap-2">
+            {value.length > 0 && (
+              <Button variant="ghost" onClick={() => onChange([])}>
+                Clear selection
+              </Button>
+            )}
+            <Button onClick={() => setOpen(false)}>Done</Button>
+          </div>
         </div>
       </Dialog>
     </>

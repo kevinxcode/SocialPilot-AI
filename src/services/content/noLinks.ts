@@ -14,4 +14,5 @@ export function stripLinks(text: string): string {
     .trim();
 }
 
-export const noLinkPlatform = (p: Platform) => p === 'facebook' || p === 'fbgroup';
+/** Facebook posts and Instagram captions go out without URLs (Instagram caption links are not clickable). */
+export const noLinkPlatform = (p: Platform) => p === 'facebook' || p === 'fbgroup' || p === 'instagram';

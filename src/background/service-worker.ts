@@ -9,7 +9,6 @@ import { refreshEngagement } from '@/services/analytics/engagement';
 import { ownReplies } from '@/services/autopilot/ownReplies';
 import { installSyncHooks, markSettingsDirty, syncNow } from '@/services/cloud/sync';
 import { holdsPublisherLease } from '@/services/cloud/leader';
-import { mediaBlob } from '@/services/cloud/drive';
 
 installSyncHooks();
 import { dailySummary } from '@/services/autopilot/insights';
@@ -19,7 +18,7 @@ import { dailySummary } from '@/services/autopilot/insights';
 import { topicForPost } from '@/services/content/topics';
 import { aiRouter } from '@/services/ai/AIRouter';
 import { db, log, seedIfEmpty } from '@/services/storage/db';
-import { removeDuplicates, repairOrphans, processDue, recoverOnStartup, schedulePost, type QueueDeps } from '@/services/publishing/PublishingQueue';
+import { autoReorder, removeDuplicates, repairOrphans, processDue, recoverOnStartup, schedulePost, type QueueDeps } from '@/services/publishing/PublishingQueue';
 import { publishers } from '@/services/publishing/rpa/RpaPublisher';
 import { fingerprint } from '@/services/publishing/fingerprint';
 import { autopilotHooks } from './autopilotHooks';
@@ -43,10 +42,14 @@ function notify(title: string, message: string, id?: string, buttons?: { title: 
 }
 
 async function loadMedia(ids: string[]): Promise<Blob[]> {
-  const items = (await db.media.bulkGet(ids)).filter((m): m is NonNullable<typeof m> => !!m);
-  // A file synced from another device is downloaded from Google Drive the first time it is needed.
-  const blobs = await Promise.all(items.map((m) => mediaBlob(m)));
-  return blobs.filter((b): b is Blob => !!b);
+  // Media files are stored on this device only (not synced). A post is never published with media silently missing:
+  // that happens when the post was made on another computer, or the file was removed from the Media Library.
+  const items = await db.media.bulkGet(ids);
+  const blobs = items.map((m) => m?.blob);
+  if (blobs.some((b) => !b)) {
+    throw new Error('Media file not on this computer — publish this post from the computer where its image/video was added, or add the file to the Media Library here');
+  }
+  return blobs as Blob[];
 }
 
 export const deps: QueueDeps = {
@@ -132,6 +135,9 @@ export function tick(): Promise<void> {
       await removeDuplicates(Date.now());
       const fixed = await repairOrphans(Date.now());
       if (fixed) await log('warn', 'queue', `Re-queued ${fixed} scheduled posts that had lost their queue entry`);
+      // Automatic queue: posts that collide on the same platform are spread out (only ever moved later).
+      const spread = await autoReorder(Date.now());
+      if (spread) await log('info', 'queue', `Automatic queue: ${spread} post(s) moved so they do not collide`);
       await processDue(Date.now(), deps);
       await automaticComments().catch((e: Error) => log('warn', 'comments', e.message));
       if (!(await db.queue.where('runAt').belowOrEqual(Date.now()).count()))

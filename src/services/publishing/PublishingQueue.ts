@@ -39,11 +39,27 @@ export function zonedToUtc(local: string, timezone: string): Date {
 
 const label = (p: Platform) => platformLabel(p);
 
+/** Instagram feed posts need exactly one image or video (no text-only posts, no carousel yet). */
+/** Shortest caption fingerprint that can safely identify our own Instagram post on the profile. */
+export const MIN_VERIFY_CHARS = 20;
+
+export function instagramMediaError(post: Pick<Post, 'platform' | 'mediaIds'> & { fingerprint?: string }): string | null {
+  if (post.platform !== 'instagram') return null;
+  if (post.mediaIds.length === 0) return 'Instagram posts need an image — pick one first';
+  if (post.mediaIds.length > 1) return 'Instagram: only one image per post for now (no carousel yet)';
+  if (post.fingerprint !== undefined && post.fingerprint.length < MIN_VERIFY_CHARS) {
+    return `Instagram caption needs at least ${MIN_VERIFY_CHARS} letters of normal text (not only hashtags, emoji or links) — it is used to confirm the post on your profile`;
+  }
+  return null;
+}
+
 export async function schedulePost(postId: string, at: Date, opts: { immediate?: boolean } = {}): Promise<void> {
   await db.transaction('rw', db.posts, db.queue, async () => {
     const post = await db.posts.get(postId);
     if (!post) throw new Error('Post not found');
     if (post.status === 'published') throw new Error('Post is already published');
+    const igError = instagramMediaError(post);
+    if (igError) throw new Error(igError);
     await db.queue.where('postId').equals(postId).delete();
     await db.posts.update(postId, { status: 'scheduled', scheduledAt: at.getTime(), attempts: 0, error: undefined, nextRetryAt: undefined, updatedAt: Date.now() });
     await db.queue.add({ id: uid(), kind: 'post', platform: post.platform, postId, runAt: at.getTime(), ...(opts.immediate ? { immediate: true } : {}) });
@@ -54,9 +70,93 @@ export async function cancel(postId: string): Promise<void> {
   await db.transaction('rw', db.posts, db.queue, async () => {
     const post = await db.posts.get(postId);
     if (!post) return;
-    if (post.status === 'processing' || post.status === 'verifying') throw new Error('Post is being published right now and cannot be cancelled');
+    if (post.status === 'processing' || (await isBeingWorkedOn(postId))) throw new Error('Post is being published right now and cannot be cancelled');
+    // 'verifying' (waiting for a feed check) may be cancelled: nothing is posted again, the checks just stop.
     await db.queue.where('postId').equals(postId).delete();
     if (post.status !== 'published') await db.posts.update(postId, { status: 'cancelled', updatedAt: Date.now() });
+  });
+}
+
+/** A queue item of this post is locked by a running publish / feed check right now. */
+export async function isBeingWorkedOn(postId: string, now = Date.now()): Promise<boolean> {
+  return (await db.queue.where('postId').equals(postId).toArray()).some((q) => !!q.lockedUntil && q.lockedUntil > now);
+}
+
+/**
+ * "Mark as published": the user saw the post live (e.g. one the app cannot find on the feed). Only for posts that
+ * are waiting or verifying and not being worked on right now. Returns how many were marked.
+ */
+export async function markPublishedByUser(postIds: string[], now = Date.now()): Promise<number> {
+  return db.transaction('rw', db.posts, db.queue, async () => {
+    let n = 0;
+    for (const id of postIds) {
+      const post = await db.posts.get(id);
+      if (!post || !['verifying', 'scheduled'].includes(post.status) || (await isBeingWorkedOn(id, now))) continue;
+      await db.queue.where('postId').equals(id).delete();
+      await db.posts.update(id, { status: 'published', publishedAt: post.publishedAt ?? now, error: undefined, nextRetryAt: undefined, paused: undefined, note: 'Marked as published by you', updatedAt: now });
+      n++;
+    }
+    return n;
+  });
+}
+
+/** Minimum minutes between two posts on a platform (Instagram: never below its own safety minimum). */
+export function gapMinutes(platform: Platform, s: { minGapMinutes: number; groupGapMinutes: number }): number {
+  return platform === 'fbgroup' ? s.groupGapMinutes : platform === 'instagram' ? Math.max(s.minGapMinutes, INSTAGRAM_MIN_GAP_MINUTES) : s.minGapMinutes;
+}
+
+/**
+ * "Auto re-order": spreads the waiting posts of each platform at the platform's gap, starting from now (or from the
+ * last published post + gap), keeping their current order. Paused posts, replies, posts being published or checked,
+ * and posts already planned later than their new slot are left as they are. Returns how many posts were moved.
+ */
+export async function autoReorder(now = Date.now()): Promise<number> {
+  const settings = await getSettings();
+  return db.transaction('rw', db.posts, db.queue, async () => {
+    const waiting = (await db.posts.where('status').equals('scheduled').toArray()).filter((p) => !p.paused && !p.replyTo);
+    let moved = 0;
+    for (const platform of [...new Set(waiting.map((p) => p.platform))]) {
+      const gapMs = gapMinutes(platform, settings) * 60_000;
+      const lastPub = Math.max(
+        0,
+        ...(await db.posts.where('platform').equals(platform).filter((p) => p.status === 'published' && !p.replyTo && !!p.publishedAt).toArray()).map((p) => p.publishedAt!),
+      );
+      // First slot is NOW (not later): this runs every scheduler cycle, so a due post must stay due.
+      let slot = Math.max(now, lastPub ? lastPub + gapMs : 0);
+      const list = waiting.filter((p) => p.platform === platform).sort((a, b) => (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0) || a.createdAt - b.createdAt);
+      for (const p of list) {
+        const q = await db.queue.where('postId').equals(p.id).first();
+        if (!q || (q.lockedUntil && q.lockedUntil > now)) continue; // being worked on right now
+        // A post already planned later than its slot keeps its own (later) time.
+        const at = Math.max(slot, p.scheduledAt ?? 0);
+        if (at !== q.runAt || at !== p.scheduledAt) {
+          await db.queue.update(q.id, { runAt: at });
+          await db.posts.update(p.id, { scheduledAt: at, nextRetryAt: undefined, error: p.error?.startsWith('Waiting:') ? undefined : p.error, updatedAt: now });
+          moved++;
+        }
+        slot = at + gapMs;
+      }
+    }
+    return moved;
+  });
+}
+
+/**
+ * Pauses or resumes posts. A paused post keeps its place in the queue but is never published until resumed.
+ * Only waiting posts are changed (one being published right now cannot be paused). Returns how many changed.
+ */
+export async function setPaused(postIds: string[], paused: boolean, now = Date.now()): Promise<number> {
+  return db.transaction('rw', db.posts, db.queue, async () => {
+    let n = 0;
+    for (const id of postIds) {
+      const post = await db.posts.get(id);
+      if (!post || post.status !== 'scheduled' || !!post.paused === paused) continue;
+      await db.posts.update(id, { paused: paused || undefined, updatedAt: now });
+      // Resumed: due again right away (the gap rules still apply).
+      if (!paused) await db.queue.where('postId').equals(id).modify((q) => { if (q.runAt > now && (post.scheduledAt ?? 0) <= now) q.runAt = now; });
+      n++;
+    }
+    return n;
   });
 }
 
@@ -86,6 +186,9 @@ async function setPost(id: string, patch: Partial<Post>) {
 }
 
 /** Group failures that will not fix themselves on retry. */
+/** Minimum time between two Instagram posts, whatever the general gap setting says. */
+export const INSTAGRAM_MIN_GAP_MINUTES = 120;
+
 export const PERMANENT_GROUP_FAILURE = /paused|dijeda|not a member|join the group|not found or disabled|posting is turned off/i;
 
 /**
@@ -214,6 +317,16 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     return;
   }
   const pub = deps.publishers[post.platform];
+  // Paused by the user, or an autopilot post while autopilot is paused/off: keep it waiting, never publish it.
+  // (An ambiguous attempt in 'verifying' is still checked below, so it is never lost; it is just not reposted.)
+  if (post.status === 'scheduled') {
+    const ap = post.source === 'autopilot' ? (await getSettings()).autopilot : null;
+    if (post.paused || (ap && (!ap.enabled || ap.paused))) {
+      // Re-check in 5 minutes, but keep the post's own scheduled time (it is shown, and used on resume).
+      await db.queue.update(item.id, { lockedUntil: undefined, runAt: now + 5 * 60_000 });
+      return;
+    }
+  }
   if (post.replyTo && post.status === 'scheduled') {
     const current = await getSettings();
     if (!current.comments.enabled || !current.autopilot.enabled || current.autopilot.paused || !current.autopilot.platforms.threads) {
@@ -243,17 +356,20 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
       if (f.pending) await setPost(post.id, { note: 'Pending admin approval in the group' });
       return;
     }
-    // A missing reply / group post is not proof it was never submitted (collapsed replies, admin moderation):
-    // never resend automatically — check again a few times, then ask the user to look.
-    if (post.replyTo || post.platform === 'fbgroup') {
+    // A missing reply / group post / Instagram post is not proof it was never submitted (collapsed replies, admin
+    // moderation, Instagram still processing or pinned posts hiding it): never resend automatically — check again a
+    // few times, then ask the user to look.
+    if (post.replyTo || post.platform === 'fbgroup' || post.platform === 'instagram') {
       const checks = post.attempts + 1;
       if (checks > MAX_ATTEMPTS) {
-        await setPost(post.id, { status: 'failed', error: 'Not found after several checks. It may be waiting for admin approval — check the group before posting again.' });
+        const where = post.platform === 'instagram' ? 'Check your Instagram profile' : post.replyTo ? 'Check the thread' : 'It may be waiting for admin approval — check the group';
+        await setPost(post.id, { status: 'failed', error: `Not found after several checks. ${where} before posting again.` });
         await finish(item.id);
         await log('warn', 'publish', `${label(post.platform)}: not confirmed; not resent to avoid duplicates`);
         return;
       }
-      await setPost(post.id, { status: 'verifying', attempts: checks, error: `${post.replyTo ? 'Reply' : 'Group post'} not yet visible; automatic resend disabled to prevent duplicates`, nextRetryAt: now + 30 * 60_000 });
+      const what = post.replyTo ? 'Reply' : post.platform === 'instagram' ? 'Instagram post' : 'Group post';
+      await setPost(post.id, { status: 'verifying', attempts: checks, error: `${what} not yet visible; automatic resend disabled to prevent duplicates`, nextRetryAt: now + 30 * 60_000 });
       await release(item.id, now + 30 * 60_000);
       return;
     }
@@ -276,11 +392,14 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     }
   }
   const lastAt = last[0]?.publishedAt ?? 0;
-  const gapMs = (isReply ? REPLY_GAP_MINUTES : post.platform === 'fbgroup' ? groupGapMinutes : minGapMinutes) * 60_000;
-  if (lastAt && now - lastAt < gapMs && !item.immediate) {
+  // Instagram is stricter about automation: never more than one post every INSTAGRAM_MIN_GAP_MINUTES.
+  const platformGap = gapMinutes(post.platform, { minGapMinutes, groupGapMinutes });
+  const gapMs = (isReply ? REPLY_GAP_MINUTES : platformGap) * 60_000;
+  // "Publish now" skips the gap — except on Instagram, where the 2-hour minimum always applies (account safety).
+  if (lastAt && now - lastAt < gapMs && (!item.immediate || post.platform === 'instagram')) {
     await setPost(post.id, { nextRetryAt: lastAt + gapMs, error: `Waiting: min ${gapMs / 60_000} min gap after the last ${label(post.platform)} post` });
     await release(item.id, lastAt + gapMs);
-    await log('info', 'queue', `${label(post.platform)}: deferred to respect ${minGapMinutes} min gap`);
+    await log('info', 'queue', `${label(post.platform)}: deferred to respect ${gapMs / 60_000} min gap`);
     return;
   }
 
@@ -331,11 +450,19 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   const attempts = post.attempts + 1;
   await db.queue.update(item.id, { lockedUntil: Date.now() + PUBLISH_LOCK_MS });
   await setPost(post.id, { status: 'processing', attempts, error: undefined });
+  // Media is loaded BEFORE posting: if it cannot be loaded nothing was posted, so this is a plain failure (retried).
+  const media = await deps.loadMedia(post.mediaIds).then(
+    (m) => ({ ok: true as const, m }),
+    (e: Error) => ({ ok: false as const, reason: e.message }),
+  );
   let res: PublishResult;
-  try {
-    res = await pub.publish({ ...post, attempts }, await deps.loadMedia(post.mediaIds), {});
-  } catch (e) {
-    res = { status: 'unknown', reason: (e as Error).message };
+  if (!media.ok) res = { status: 'failed', reason: media.reason };
+  else {
+    try {
+      res = await pub.publish({ ...post, attempts }, media.m, {});
+    } catch (e) {
+      res = { status: 'unknown', reason: (e as Error).message };
+    }
   }
 
   if (res.status === 'published') {
