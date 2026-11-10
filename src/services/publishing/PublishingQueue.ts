@@ -346,6 +346,12 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
         await userCancelled(item, post, 'Cancelled: you closed the SocialPilot tab during the feed check. It may already be posted — check your profile.');
         return;
       }
+      if ((e as Error).name === 'TargetMissingError') {
+        // The group/account was removed or disabled: the feed can never be checked, so stop instead of looping.
+        await setPost(post.id, { status: 'failed', error: `${(e as Error).message}. It may already be posted — check before posting again.` });
+        await finish(item.id);
+        return;
+      }
       // Could not look at the feed: never treat that as "not posted". Try the check again later.
       await setPost(post.id, { status: 'verifying', error: `Feed check failed: ${(e as Error).message}` });
       await release(item.id, now + 2 * 60_000);

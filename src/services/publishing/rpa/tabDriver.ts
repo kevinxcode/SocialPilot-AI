@@ -149,21 +149,33 @@ export const TabDriver = {
   },
 
   async send<T>(tabId: number, msg: RpaCommand, timeoutMs = 150_000): Promise<T> {
-    if (closedTabs.has(tabId)) throw new TabClosedError();
-    let off = () => undefined as void;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const closed = new Promise<T>((_r, rej) => {
-      closeWaiters.set(tabId, () => rej(new TabClosedError()));
-      off = () => void closeWaiters.delete(tabId);
-    });
-    return Promise.race([
-      closed,
-      chrome.tabs.sendMessage(tabId, { ...msg, __rpa: true }) as Promise<T>,
-      new Promise<T>((_r, rej) => { timer = setTimeout(() => rej(new Error('Automation step timed out')), timeoutMs); }),
-    ]).catch((e) => {
-      // The message channel breaks when the tab goes away; report that as a user close.
-      throw closedTabs.has(tabId) ? new TabClosedError() : e;
-    }).finally(() => { off(); clearTimeout(timer); });
+    try {
+      return await sendOnce<T>(tabId, msg, timeoutMs);
+    } catch (e) {
+      // The page navigated mid-command (Facebook redirects), which kills the content script and its channel.
+      // Read-only commands are safe to run again on the reloaded page; publish/reply never are.
+      if (!CHANNEL_LOST.test((e as Error).message) || !READ_ONLY.has(msg.cmd)) {
+        if (CHANNEL_LOST.test((e as Error).message)) throw new Error('The page reloaded or navigated during the step');
+        throw e;
+      }
+      // The user may close the tab while we re-attach: report that as a cancel, not as Chrome's raw tab error.
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        if (tab.status !== 'complete') await waitComplete(tabId, 30_000).catch(() => undefined);
+        await sleep(1500);
+        if (closedTabs.has(tabId)) throw new TabClosedError();
+        await inject(tabId);
+        await waitForContentScript(() => chrome.tabs.sendMessage(tabId, { cmd: 'ping', __rpa: true }), 12_000);
+      } catch (e3) {
+        throw closedTabs.has(tabId) ? new TabClosedError() : e3;
+      }
+      try {
+        return await sendOnce<T>(tabId, msg, timeoutMs);
+      } catch (e2) {
+        if (CHANNEL_LOST.test((e2 as Error).message)) throw new Error('The page kept reloading during the step');
+        throw e2;
+      }
+    }
   },
 
   async focus(tabId: number): Promise<void> {
@@ -181,6 +193,29 @@ export const TabDriver = {
     }
   },
 };
+
+const CHANNEL_LOST = /message channel closed|Receiving end does not exist|message port closed/i;
+const READ_ONLY = new Set<string>(['ping', 'preflight', 'findExisting', 'findReply', 'scrapeFeed', 'recentPosts', 'scrapeGroups']);
+
+function sendOnce<T>(tabId: number, msg: RpaCommand, timeoutMs: number): Promise<T> {
+  {
+    if (closedTabs.has(tabId)) return Promise.reject(new TabClosedError());
+    let off = () => undefined as void;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const closed = new Promise<T>((_r, rej) => {
+      closeWaiters.set(tabId, () => rej(new TabClosedError()));
+      off = () => void closeWaiters.delete(tabId);
+    });
+    return Promise.race([
+      closed,
+      chrome.tabs.sendMessage(tabId, { ...msg, __rpa: true }) as Promise<T>,
+      new Promise<T>((_r, rej) => { timer = setTimeout(() => rej(new Error('Automation step timed out')), timeoutMs); }),
+    ]).catch((e) => {
+      // The message channel breaks when the tab goes away; report that as a user close.
+      throw closedTabs.has(tabId) ? new TabClosedError() : e;
+    }).finally(() => { off(); clearTimeout(timer); });
+  }
+}
 
 let chain: Promise<unknown> = Promise.resolve();
 /** Serializes RPA runs: only one automation at a time. */

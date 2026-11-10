@@ -321,6 +321,19 @@ test('[review#2] feed check that errors defers instead of reposting', async () =
   expect((await db.queue.toArray())[0].runAt).toBeGreaterThan(T0);
 });
 
+test('feed check for a removed/disabled group fails the post instead of retrying forever', async () => {
+  await addPost('p1', { platform: 'fbgroup', groupId: 'gone', status: 'verifying', attempts: 1, scheduledAt: T0 });
+  await db.queue.put({ id: 'q1', kind: 'post', platform: 'fbgroup', postId: 'p1', runAt: T0 });
+  const pub = fakePublisher([{ status: 'published' }]);
+  pub.findExisting = vi.fn(async () => { const e = new Error('Facebook Group not found or disabled in Social Accounts'); e.name = 'TargetMissingError'; throw e; });
+  await processDue(T0, deps(pub));
+  expect(pub.calls).toBe(0);
+  const p = await db.posts.get('p1');
+  expect(p?.status).toBe('failed');
+  expect(p?.error).toMatch(/check before posting again/);
+  expect(await db.queue.count()).toBe(0);
+});
+
 test('[review#3] after an ambiguous attempt, a later preflight failure keeps verifying so the feed is checked again', async () => {
   await addPost('p1');
   await schedulePost('p1', new Date(T0));

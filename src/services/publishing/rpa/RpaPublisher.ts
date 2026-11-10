@@ -7,6 +7,14 @@ import { TabDriver, exclusive } from './tabDriver';
 import { canonicalThreadUrl } from '@/services/content/comments';
 
 const CONFIRM_WINDOW_MS = 90_000;
+
+/** The post's account/group is gone or disabled: retrying cannot help until the user fixes Social Accounts. */
+export class TargetMissingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TargetMissingError';
+  }
+}
 /** How many of the newest Instagram posts are opened to look for ours. */
 const INSTAGRAM_RECENT_CHECK = 6;
 
@@ -36,7 +44,7 @@ export class RpaPublisher implements Publisher {
   private async target(post?: Pick<Post, 'groupId'>): Promise<Account> {
     if (this.platform === 'fbgroup') {
       const g = post?.groupId ? await db.groups.get(post.groupId) : undefined;
-      if (!g || !g.enabled) throw new Error('Facebook Group not found or disabled in Social Accounts');
+      if (!g || !g.enabled) throw new TargetMissingError('Facebook Group not found or disabled in Social Accounts');
       return { id: g.id, platform: 'fbgroup', name: g.name, profileUrl: g.url };
     }
     return this.account();
