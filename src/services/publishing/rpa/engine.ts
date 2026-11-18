@@ -216,7 +216,7 @@ export async function runFindExisting(cfg: PlatformSelectors, fp: string, o: Eng
   return { found: true, url: a ? new URL(a.getAttribute('href')!, location.origin).toString().replace(/\?.*$/, '') : undefined };
 }
 
-const TOPIC_RE = /community or topic|add a topic|komunitas atau topik|tambahkan topik/i;
+const TOPIC_RE = /community or topic|add a topic|add topic|komunitas atau topik|tambahkan topik|tambah topik/i;
 
 /** Fallback: the topic field may show its hint via placeholder / aria / data attributes or a pseudo-element. */
 export function findTopicField(dialog: Element): HTMLElement | null {
@@ -240,7 +240,9 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
  */
 export async function setTopic(cfg: PlatformSelectors, dialog: Element, box: Element, topic: string, o: EngineOpts = {}): Promise<string | null> {
   try {
-    const field = findBySelectors(cfg.topicField, dialog) ?? findTopicField(dialog);
+    // The topic row sits in the composer header, which is not always inside the element we treat as the dialog.
+    const scope = dialog.closest('[role="dialog"]') ?? dialog.parentElement ?? dialog;
+    const field = findBySelectors(cfg.topicField, dialog) ?? findTopicField(dialog) ?? findTopicField(scope);
     if (!field) return 'topic field not found';
     const isEditable = (el: Element | null): el is HTMLElement =>
       !!el && el !== box && !box.contains(el) && ((el as HTMLElement).tagName === 'INPUT' || (el as HTMLElement).isContentEditable);
@@ -275,7 +277,8 @@ export async function setTopic(cfg: PlatformSelectors, dialog: Element, box: Ele
     const option = await waitFor(
       () => {
         const listed = (cfg.topicOption ?? []).flatMap((sel) => [...document.querySelectorAll<HTMLElement>(sel.css)]);
-        const hit = listed.find((el) => norm(el.textContent ?? '').includes(want)) ?? listed[0];
+        // exact topic first, then one that starts with it; never a random first suggestion (wrong audience)
+        const hit = listed.find((el) => norm(el.textContent ?? '') === want) ?? listed.find((el) => norm(el.textContent ?? '').startsWith(want));
         if (hit) return hit;
         // suggestion rows rendered as plain clickable divs: exact topic text outside the composer box
         const rows = Array.from(document.querySelectorAll<HTMLElement>('[role="button"], [role="menuitem"], [tabindex="0"]')).filter(
@@ -287,10 +290,17 @@ export async function setTopic(cfg: PlatformSelectors, dialog: Element, box: Ele
       o.pollMs,
     );
     if (option) click(option);
-    else {
-      editable.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-      return 'no topic suggestion appeared (pressed Enter)';
-    }
+    else editable.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+    // Confirm the topic now shows in the composer header (outside the text box), not just typed into a search field.
+    const shown = await waitFor(
+      () =>
+        Array.from(scope.querySelectorAll<HTMLElement>('span, div, a')).some(
+          (el) => !box.contains(el) && el !== editable && !el.querySelector('*') && norm(el.textContent ?? '') === want,
+        ) || null,
+      T(o, 3000),
+      o.pollMs,
+    );
+    if (!shown) return option ? 'topic clicked but not shown in the composer' : 'no topic suggestion appeared (pressed Enter)';
     return null;
   } catch (e) {
     return `topic error: ${(e as Error).message}`;

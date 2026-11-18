@@ -62,3 +62,11 @@ test('pickTopic tells the AI to use a listed topic only when it matches the post
   expect(await pickTopic('Laporan bulanan siap cetak', ['Jadwal pegawai mobile'], spy as never)).toBe('Laporan Laundry');
   expect(seen[0]).toMatch(/ONLY if it clearly matches/);
 });
+
+test('keywordTopic: only a preferred topic whose words appear in the post', async () => {
+  const { keywordTopic } = await import('@/services/content/topic');
+  const list = ['Bisnis Laundry', 'Laundry', 'Kasir Online'];
+  expect(keywordTopic('Tips bisnis laundry biar untung', list)).toBe('Bisnis Laundry');
+  expect(keywordTopic('Kamu masih catat pesanan laundry pakai kertas?', list)).toBe('Laundry');
+  expect(keywordTopic('Resep kue enak', list)).toBeUndefined();
+});

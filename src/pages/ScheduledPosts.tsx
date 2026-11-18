@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { formatInTimeZone } from 'date-fns-tz';
 import { Button, Empty, Select, Table, Tabs, useToast } from '@/components/ui';
-import { CheckCircle2, ListOrdered, Loader2, Pause, Play, X } from 'lucide-react';
+import { CheckCircle2, ListOrdered, Loader2, Pause, Play, Send, X } from 'lucide-react';
+import { sendToSw } from '@/background/messages';
 import { autoReorder, cancel, markPublishedByUser, setPaused } from '@/services/publishing/PublishingQueue';
 import { useSettings } from '@/hooks/useSettings';
 import { db } from '@/services/storage/db';
@@ -103,6 +104,20 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
       setBusy(false);
     }
   };
+  const runNow = async () => {
+    const ids = chosen.filter((p) => p.status === 'scheduled').map((p) => p.id);
+    if (!ids.length) return toast('Only scheduled posts can be run now', 'err');
+    if (!confirm(`Publish ${ids.length} post(s) now? They are posted one after another in the background.`)) return;
+    setBusy(true);
+    try {
+      let n = 0;
+      for (const postId of ids) if ((await sendToSw({ type: 'publishNow', postId })).ok) n++;
+      toast(`${n} post(s) started${n < ids.length ? ` · ${ids.length - n} failed` : ''} — you will get a notification per post`);
+      setSelected(new Set());
+    } finally {
+      setBusy(false);
+    }
+  };
   const fmt = (ms?: number) => (ms ? formatInTimeZone(ms, tz, 'dd MMM yyyy HH:mm') : '—');
 
   return (
@@ -158,6 +173,9 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
       {view === 'queue' && chosen.length > 0 && (
         <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-md border border-primary/40 bg-primary/10 p-2 text-sm">
           <span className="px-1 font-medium">{chosen.length} selected</span>
+          <Button size="sm" disabled={busy || !chosen.some((p) => p.status === 'scheduled')} onClick={runNow} title="Publish the selected scheduled posts now">
+            <Send className="h-3.5 w-3.5" /> Run now
+          </Button>
           <Button size="sm" variant="outline" disabled={busy} onClick={() => bulk('pause')}>
             <Pause className="h-3.5 w-3.5" /> Pause
           </Button>

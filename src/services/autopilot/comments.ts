@@ -12,17 +12,39 @@ import { fingerprint } from '@/services/publishing/fingerprint';
 import { uid } from '@/lib/utils';
 import type { Post, Settings } from '@/types/models';
 
-export function commentBudget(s: Settings, posts: Post[], now: number): boolean {
-  if (!s.comments.enabled || !s.autopilot.enabled || s.autopilot.paused || !s.autopilot.platforms.threads) return false;
+const STUCK_MS = 6 * 3600_000;
+
+/** Why automatic comments cannot run right now, or null when they can. */
+export function commentBlockReason(s: Settings, posts: Post[], now: number): string | null {
+  if (!s.comments.enabled) return 'Automatic comments are switched off';
+  if (!s.autopilot.enabled) return 'Autopilot is off';
+  if (s.autopilot.paused) return 'Autopilot is paused';
+  if (!s.autopilot.platforms.threads) return 'Threads is not enabled in Autopilot platforms';
   const hm = formatInTimeZone(now, s.timezone, 'HH:mm');
-  if (hm < s.autopilot.windowStart || hm >= s.autopilot.windowEnd) return false;
+  if (hm < s.autopilot.windowStart || hm >= s.autopilot.windowEnd) return `Outside the autopilot window ${s.autopilot.windowStart}-${s.autopilot.windowEnd}`;
   const replies = posts.filter((p) => p.replyTo && p.replyKind !== 'own'); // replies on our own posts have their own budget
-  if (replies.some((p) => ['scheduled', 'processing', 'verifying'].includes(p.status))) return false;
+  // A reply stuck for hours (e.g. lost queue entry) must not block comments forever.
+  if (replies.some((p) => ['scheduled', 'processing', 'verifying'].includes(p.status) && now - Math.max(p.updatedAt ?? 0, p.createdAt) < STUCK_MS))
+    return 'A previous reply is still being posted';
   const today = formatInTimeZone(now, s.timezone, 'yyyy-MM-dd');
   const count = replies.filter((p) => formatInTimeZone(p.createdAt, s.timezone, 'yyyy-MM-dd') === today).length;
   const cap = Math.max(0, Math.min(10, Math.floor(s.comments.dailyLimit)));
   const gap = Math.max(30, s.comments.gapMinutes) * 60_000;
-  return Number.isFinite(cap) && Number.isFinite(gap) && count < cap && replies.every((p) => now - Math.max(p.createdAt, p.publishedAt ?? 0) >= gap);
+  if (!Number.isFinite(cap) || !Number.isFinite(gap) || count >= cap) return `Daily comment limit reached (${count}/${Number.isFinite(cap) ? cap : 0})`;
+  if (!replies.every((p) => now - Math.max(p.createdAt, p.publishedAt ?? 0) >= gap)) return `Waiting ${Math.round(gap / 60_000)} min between comments`;
+  return null;
+}
+
+export function commentBudget(s: Settings, posts: Post[], now: number): boolean {
+  return commentBlockReason(s, posts, now) === null;
+}
+
+/** Logs a skip reason only when it changes, so the log is not flooded every scheduler tick. */
+async function skipped(reason: string): Promise<void> {
+  const prev = (await chrome.storage.local.get('commentsSkipReason')).commentsSkipReason;
+  if (prev === reason) return;
+  await chrome.storage.local.set({ commentsSkipReason: reason });
+  await log('info', 'comments', `Automatic comments skipped: ${reason}`);
 }
 
 let running: Promise<void> | undefined;
@@ -34,17 +56,22 @@ export function automaticComments(now = Date.now(), deps: { router: RouterLike; 
 
 async function run(now: number, deps: { router: RouterLike; scrape: typeof scrapeThreadsSearch }): Promise<void> {
   const s = await getSettings();
-  if (!commentBudget(s, await db.posts.toArray(), now)) return;
+  const reason = commentBlockReason(s, await db.posts.toArray(), now);
+  if (reason) return skipped(reason);
   const last = Number((await chrome.storage.local.get('commentsLastScan')).commentsLastScan ?? 0);
   if (now - last < 30 * 60_000) return;
   const account = await db.accounts.where('platform').equals('threads').first();
   const brand = s.activeBrandId ? await db.brands.get(s.activeBrandId) : await db.brands.toCollection().first();
-  if (!account || !brand) return;
+  if (!account?.profileUrl) return skipped('No Threads account connected (Accounts page)');
+  if (!brand) return skipped('No brand configured');
+  await chrome.storage.local.remove('commentsSkipReason');
   const ownHandle = new URL(account.profileUrl).pathname.replace(/\/$/, '').toLowerCase();
   const topics = (await enabledTopics()).slice(0, 3);
   if (!topics.length) topics.push(brand.industry || 'bisnis laundry');
   await chrome.storage.local.set({ commentsLastScan: now });
+  await log('info', 'comments', `Searching Threads for: ${topics.join(', ')}`);
   const results = await deps.scrape(topics, 5);
+  if (!results.some((r) => r.posts.length)) return void (await log('warn', 'comments', 'Threads search returned no posts (logged out of Threads, or search page changed?)'));
   const seen = new Set((await db.posts.toArray()).map((p) => p.replyTo).filter(Boolean));
   const context = await buildBrandContext(brand.id);
   for (const candidate of results.flatMap((r) => r.posts).slice(0, 12)) {

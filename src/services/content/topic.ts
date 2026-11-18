@@ -52,7 +52,17 @@ export async function pickTopic(text: string, preferred: string[], router: Route
   } catch {
     /* no topic */
   }
-  // A wrong topic shows the post to the wrong audience (seen live: a reports post tagged "Jadwal pegawai mobile"):
-  // better to post without one.
-  return undefined;
+  // AI unavailable: use one of the user's own topics only when its words clearly appear in the post. A wrong topic shows
+  // the post to the wrong audience (seen live: a reports post tagged "Jadwal pegawai mobile"), so never guess beyond that.
+  return keywordTopic(text, list);
+}
+
+/** The preferred topic whose words (3+ letters) all appear in the post; the most specific one wins. */
+export function keywordTopic(text: string, preferred: string[]): string | undefined {
+  const body = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+  const hits = preferred
+    .map((p) => ({ p, words: p.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3) }))
+    .filter(({ words }) => words.length && words.every((w) => body.includes(` ${w}`)))
+    .sort((a, b) => b.words.length - a.words.length);
+  return hits[0]?.p;
 }

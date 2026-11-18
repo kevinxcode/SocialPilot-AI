@@ -508,7 +508,10 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   }
 
   if (res.status === 'published') {
-    if (res.note) await setPost(post.id, { note: res.note });
+    if (res.note) {
+      await setPost(post.id, { note: res.note });
+      await log('warn', 'topic', `${label(post.platform)}: ${res.note}`);
+    }
     await markPublished(item, { ...post, attempts }, now, res.url, deps);
     return;
   }
