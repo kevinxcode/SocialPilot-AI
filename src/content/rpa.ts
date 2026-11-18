@@ -1,10 +1,10 @@
 /** RPA content script — injected on demand by the service worker into the automation tab. */
-import { runFindExisting, runPreflight, runPublish, runScrapeFeed, runScrapeGroups } from '@/services/publishing/rpa/engine';
+import { runFindExisting, runFindInActivity, runPreflight, runPublish, runScrapeFeed, runScrapeGroups } from '@/services/publishing/rpa/engine';
 import { FACEBOOK } from '@/services/publishing/rpa/selectors/facebook';
 import { THREADS } from '@/services/publishing/rpa/selectors/threads';
 import { FBGROUP } from '@/services/publishing/rpa/selectors/fbgroup';
 import { INSTAGRAM } from '@/services/publishing/rpa/selectors/instagram';
-import { runInstagramFindPost, runInstagramPreflight, runInstagramPublish, runInstagramRecent } from '@/services/publishing/rpa/instagram';
+import { runInstagramFindPost, runInstagramFixCaption, runInstagramPreflight, runInstagramPublish, runInstagramRecent } from '@/services/publishing/rpa/instagram';
 import type { RpaCommand } from '@/services/publishing/Publisher';
 import { runReply, findReply } from '@/services/publishing/rpa/reply';
 
@@ -30,6 +30,10 @@ if (!w.__socialpilotRpa) {
           return ig ? runInstagramPublish(cfg, msg.input) : runPublish(cfg, msg.input);
         case 'findExisting':
           return ig ? runInstagramFindPost(msg.fingerprint, msg.since) : runFindExisting(cfg, msg.fingerprint);
+        case 'fixCaption':
+          return runInstagramFixCaption(cfg, msg.text);
+        case 'findInActivity':
+          return runFindInActivity(msg.fingerprint, msg.groupName);
         case 'scrapeFeed':
           return runScrapeFeed(cfg, msg.max);
         case 'recentPosts':

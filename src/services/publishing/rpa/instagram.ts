@@ -10,7 +10,7 @@
  */
 import { attachFiles, click, closeSuggestions, dataUrlToFile, findBySelectors, humanDelay, sleep, waitFor } from './dom';
 import type { EngineOpts, EngineResult, PreflightResult, PublishInput } from './engine';
-import { normalizeText } from '../fingerprint';
+import { fingerprint, normalizeText } from '../fingerprint';
 import type { PlatformSelectors } from './selectors/types';
 
 const T = (o: EngineOpts, ms: number) => Math.min(ms, o.timeoutMs ?? ms);
@@ -222,6 +222,7 @@ function createDialog(cfg: PlatformSelectors): Element | null {
 }
 
 export async function runInstagramPublish(cfg: PlatformSelectors, input: PublishInput, o: EngineOpts = {}): Promise<EngineResult> {
+  if (!input.text.trim()) return { status: 'failed', reason: 'The caption is empty — not shared. Write or generate a caption first.' };
   const d = o.delay !== false;
   if (!input.files.length) return { status: 'failed', reason: 'Instagram posts need an image or video — add one from the Media Library' };
   if (input.files.length > 1) return { status: 'failed', reason: 'Only one image or video per Instagram post is supported for now (no carousel yet)' };
@@ -290,12 +291,16 @@ export async function runInstagramPublish(cfg: PlatformSelectors, input: Publish
   }
   if (!box) return { status: 'failed', reason: `Media did not upload, or the caption step did not appear (caption box / Next button not found). ${describeScreen()} (v${cfg.version})` };
 
-  // 4. Caption
+  // The caption box can be replaced by a new element: always use the one on screen now.
+  const currentBox = () => { const dlg = createDialog(cfg); return (dlg && captionBox(cfg, dlg)) || box; };
+  // 4. Caption — never share a post without one (seen live: a post went out with an empty caption).
   let captionProof = '';
-  if (input.text.trim()) {
+  {
+    // Let the caption editor settle: Instagram can re-mount it right after the step appears, wiping early text.
+    await sleep(o.delay === false ? 0 : 1500);
     await humanDelay(d);
     const dlg = createDialog(cfg) ?? document;
-    const r = await typeCaption(box, input.text, dlg, o);
+    const r = await typeCaption(currentBox(), input.text, dlg, o);
     if (!r.ok) {
       return {
         status: 'failed',
@@ -314,6 +319,16 @@ export async function runInstagramPublish(cfg: PlatformSelectors, input: Publish
     return b && b.getAttribute('aria-disabled') !== 'true' ? b : null;
   }, T(o, 20_000), o.pollMs);
   if (!share) return { status: 'failed', reason: 'Share button not found or disabled' };
+  // Last check right before Share: the caption must STILL be in Instagram's editor (seen live: proven, then blank post).
+  if (captionProof) {
+    const root = createDialog(cfg) ?? document;
+    if (!counterMatches(captionCounter(root), input.text)) {
+      const again = await typeCaption(currentBox(), input.text, root, o);
+      if (!again.ok || !counterMatches(captionCounter(root), input.text))
+        return { status: 'failed', reason: `The caption disappeared from Instagram's editor before Share — not shared (counter ${captionCounter(root) ?? 'none'}).` };
+      captionProof = `${again.proof} (retyped before Share)`;
+    }
+  }
   click(share);
 
   // From here on: never 'failed' — only Instagram's own confirmation counts as success.
@@ -376,4 +391,44 @@ export async function runInstagramFindPost(fp: string, sinceMs?: number, o: Engi
     return 'yes' as const;
   }, T(o, 10_000), o.pollMs);
   return hit === 'yes' ? { found: true, url: location.href.replace(/[?#].*$/, '') } : { found: false };
+}
+
+/**
+ * Safety net (seen live 10 Nov: posts shared with an EMPTY caption although it was typed): on the new post's own page,
+ * ⋯ → Edit → caption → Done, then read the caption back. Only touches a post that has NO caption and is less than
+ * 10 minutes old, so another post can never be overwritten.
+ */
+export async function runInstagramFixCaption(cfg: PlatformSelectors, text: string, o: EngineOpts = {}): Promise<{ ok: boolean; reason?: string }> {
+  const fp = fingerprint(text);
+  const scope = () => document.querySelector('article') ?? document.querySelector('main');
+  const ready = await waitFor(() => scope()?.querySelector('time[datetime]') ?? null, T(o, 10_000), o.pollMs);
+  if (!ready) return { ok: false, reason: 'Post page did not load' };
+  const h1 = scope()?.querySelector('h1');
+  if (h1 && normalizeText(textOf(h1)).includes(fp)) return { ok: true }; // already right
+  if (h1 && textOf(h1).trim()) return { ok: false, reason: 'This post already has another caption — not touched' };
+  const t = Date.parse(ready.getAttribute('datetime') ?? '');
+  if (Number.isFinite(t) && Date.now() - t > 10 * 60_000) return { ok: false, reason: 'Newest post is older than 10 minutes — not touched' };
+  const byText = (re: RegExp, root: ParentNode = document) =>
+    Array.from(root.querySelectorAll<HTMLElement>('[role="button"], button')).find((b) => re.test((b.textContent ?? '').trim())) ?? null;
+  const more = document.querySelector('svg[aria-label="More options"], svg[aria-label="Opsi lainnya"]')?.closest<HTMLElement>('[role="button"], button');
+  if (!more) return { ok: false, reason: 'More options (⋯) not found' };
+  click(more);
+  const edit = await waitFor(() => byText(/^(edit|edit info|ubah|edit info)$/i), T(o, 5000), o.pollMs);
+  if (!edit) return { ok: false, reason: 'Edit not found in the post menu' };
+  click(edit);
+  const dlg = await waitFor(() => Array.from(document.querySelectorAll('[role="dialog"]')).find((d) => captionBox(cfg, d)) ?? null, T(o, 8000), o.pollMs);
+  if (!dlg) return { ok: false, reason: 'Edit caption box did not appear' };
+  await sleep(o.delay === false ? 0 : 1000);
+  const r = await typeCaption(captionBox(cfg, dlg)!, text, dlg, o);
+  if (!r.ok) return { ok: false, reason: `Caption not accepted in Edit (${r.tried.join(', ')})` };
+  await humanDelay(o.delay !== false);
+  if (!counterMatches(captionCounter(dlg), text)) return { ok: false, reason: 'Caption vanished before Done' };
+  const done = byText(/^(done|selesai)$/i, dlg);
+  if (!done) return { ok: false, reason: 'Done not found' };
+  click(done);
+  const shown = await waitFor(() => {
+    const c = scope()?.querySelector('h1');
+    return c && normalizeText(textOf(c)).includes(fp) ? c : null;
+  }, T(o, 15_000), o.pollMs);
+  return shown ? { ok: true } : { ok: false, reason: 'Caption not visible on the post after Done' };
 }

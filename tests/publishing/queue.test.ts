@@ -97,7 +97,8 @@ test('autopilot paused → its already-scheduled posts wait (nothing posted); ma
   expect((await db.posts.get('auto'))?.status).toBe('scheduled');
   expect((await db.posts.get('mine'))?.status).toBe('published');
   await updateSettings({ autopilot: { paused: false } });
-  await processDue(T0 + 6 * 60 * MIN, deps(pub)); // well after the minimum gap between posts
+  // publishedAt is stamped with the real clock, so 'well after the minimum gap' must be relative to it too.
+  await processDue(Math.max(T0, Date.now()) + 6 * 60 * MIN, deps(pub));
   expect((await db.posts.get('auto'))?.status).toBe('published');
 });
 
@@ -648,4 +649,83 @@ test('Delete: a "verifying" post waiting for its next check can be deleted; not 
   await expect(deletePost((await db.posts.get('busy'))!)).rejects.toThrow(/right now/);
   await addPost('proc', { status: 'processing' });
   await expect(deletePost((await db.posts.get('proc'))!)).rejects.toThrow(/right now/);
+});
+
+test('Facebook Page/Group: text already live in the feed → marked published, never posted again (real duplicate seen 10 Nov)', async () => {
+  await addPost('fb1', { platform: 'facebook', attempts: 2 });
+  await schedulePost('fb1', new Date(T0));
+  await db.posts.update('fb1', { attempts: 2 });
+  const pub = fakePublisher([{ status: 'published' }], [{ found: true, url: 'https://www.facebook.com/cuciqu.pro/posts/1' }]);
+  await processDue(T0, deps(pub));
+  expect(pub.calls).toBe(0);
+  expect(await db.posts.get('fb1')).toMatchObject({ status: 'published', url: 'https://www.facebook.com/cuciqu.pro/posts/1' });
+});
+
+test('Facebook Page: not in the feed yet → posted normally', async () => {
+  await addPost('fb2', { platform: 'facebook' });
+  await schedulePost('fb2', new Date(T0));
+  const pub = fakePublisher([{ status: 'published' }], [{ found: false }]);
+  await processDue(T0, deps(pub));
+  expect(pub.calls).toBe(1);
+});
+
+test('"Publish now" is never pushed back by Auto re-order, and it posts on the very next run (real bug 10 Nov)', async () => {
+  const { autoReorder } = await import('@/services/publishing/PublishingQueue');
+  await db.groups.bulkAdd([
+    { id: 'g1', name: 'A', url: 'https://www.facebook.com/groups/1', rules: '', enabled: true },
+    { id: 'g2', name: 'B', url: 'https://www.facebook.com/groups/2', rules: '', enabled: true },
+  ]);
+  await addPost('old', { platform: 'fbgroup', groupId: 'g1', status: 'published', publishedAt: T0 - 2 * MIN });
+  await addPost('now', { platform: 'fbgroup', groupId: 'g2', fingerprint: 'beda' });
+  await schedulePost('now', new Date(T0), { immediate: true });
+  await autoReorder(T0);
+  expect((await db.queue.where('postId').equals('now').first())?.runAt).toBe(T0);
+  const pub = fakePublisher([{ status: 'published' }]);
+  await processDue(T0, deps(pub));
+  expect(pub.calls).toBe(1);
+});
+
+test('group already posted today: "Publish now" is held 24 h AND the reason is shown in Details (real 10 Nov)', async () => {
+  await db.groups.add({ id: 'g1', name: 'A', url: 'https://www.facebook.com/groups/1', rules: '', enabled: true });
+  await addPost('old', { platform: 'fbgroup', groupId: 'g1', status: 'published', publishedAt: T0 - 10 * MIN });
+  await addPost('now', { platform: 'fbgroup', groupId: 'g1', fingerprint: 'lain' });
+  await schedulePost('now', new Date(T0), { immediate: true });
+  const pub = fakePublisher([{ status: 'published' }]);
+  await processDue(T0, deps(pub));
+  expect(pub.calls).toBe(0);
+  const p = await db.posts.get('now');
+  expect(p).toMatchObject({ status: 'scheduled', scheduledAt: T0 - 10 * MIN + 24 * 60 * MIN });
+  expect(p?.error).toMatch(/max 1 per group per day/);
+});
+
+test('media file missing on this computer → failed at once with the reason, never retried (real 10 Nov)', async () => {
+  await addPost('m1', { mediaIds: ['gone'] });
+  await schedulePost('m1', new Date(T0));
+  const pub = fakePublisher([{ status: 'published' }]);
+  await processDue(T0, deps(pub, { loadMedia: async () => { throw new Error('Media file not on this computer — publish it from the computer where it was added'); } }));
+  expect(pub.calls).toBe(0);
+  expect(await db.posts.get('m1')).toMatchObject({ status: 'failed', error: expect.stringMatching(/not on this computer/) });
+  expect(await db.queue.where('postId').equals('m1').count()).toBe(0);
+});
+
+test('image missing on this computer → AI-picked image from the Media Library is used and the post goes out (noted)', async () => {
+  await addPost('m2', { mediaIds: ['gone'] });
+  await schedulePost('m2', new Date(T0));
+  const pub = fakePublisher([{ status: 'published' }]);
+  const loadMedia = async (ids: string[]) => {
+    if (ids.includes('gone')) throw new Error('Media file not on this computer');
+    return [new Blob(['x'], { type: 'image/png' })];
+  };
+  await processDue(T0, deps(pub, { loadMedia, replaceMissingMedia: async () => ['local1'] }));
+  expect(pub.calls).toBe(1);
+  expect(await db.posts.get('m2')).toMatchObject({ status: 'published', mediaIds: ['local1'], note: expect.stringMatching(/AI picked/) });
+});
+
+test('image missing and the Media Library has nothing that fits → failed at once, not retried', async () => {
+  await addPost('m3', { mediaIds: ['gone'] });
+  await schedulePost('m3', new Date(T0));
+  const pub = fakePublisher([{ status: 'published' }]);
+  await processDue(T0, deps(pub, { loadMedia: async () => { throw new Error('Media file not on this computer'); }, replaceMissingMedia: async () => undefined }));
+  expect(pub.calls).toBe(0);
+  expect((await db.posts.get('m3'))?.status).toBe('failed');
 });

@@ -64,3 +64,9 @@ test('directory import skips node_modules, .git, hidden and build folders', asyn
   expect((await db.media.toArray()).map((m) => m.name).sort()).toEqual(['fb-post.jpg', 'poster.png']);
 });
 test('tagsFromPath handles Windows separators', () => { expect(tagsFromPath('a\\Promo\\kasir.png')).toEqual(['promo', 'kasir']); });
+
+test('an image already attached to a pending post is not picked again', async () => {
+  await db.media.bulkAdd([item('a'), item('b')]);
+  await db.posts.add({ id: 'p1', status: 'scheduled', mediaIds: ['a'] } as never);
+  for (let i = 0; i < 10; i++) expect((await pickMedia([]))?.id).toBe('b');
+});

@@ -108,7 +108,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const TabDriver = {
   /** Opens url in the automation window (creating it if needed) and injects the content script. */
-  async open(url: string, opts: { focus?: boolean } = {}): Promise<number> {
+  async open(url: string, opts: { focus?: boolean; reload?: boolean } = {}): Promise<number> {
     const s = await getSession();
     let tabId = s.tabId;
     if (tabId != null && closedTabs.has(tabId)) throw new TabClosedError();
@@ -119,6 +119,16 @@ export const TabDriver = {
         await done;
       } finally {
         done.cancel();
+      }
+      if (opts.reload) {
+        // Facebook keeps showing its cached feed after posting; one hard reload makes the new post visible.
+        const again = waitComplete(tabId!);
+        try {
+          await retryTabEdit(() => chrome.tabs.reload(tabId!));
+          await again;
+        } finally {
+          again.cancel();
+        }
       }
       if (opts.focus) await retryTabEdit(() => chrome.tabs.update(tabId!, { active: true }));
     } else {

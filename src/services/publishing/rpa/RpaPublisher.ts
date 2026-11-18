@@ -1,5 +1,6 @@
 import { noLinkPlatform, stripLinks } from '@/services/content/noLinks';
 import { db, log } from '@/services/storage/db';
+import { fingerprint } from '../fingerprint';
 import type { Account, Platform, Post } from '@/types/models';
 import type { Publisher, PublishResult } from '../Publisher';
 import type { EngineResult, PreflightResult, ScrapedPost } from './engine';
@@ -26,7 +27,7 @@ async function blobToDataUrl(b: Blob): Promise<string> {
 }
 
 export interface Driver {
-  open(url: string, opts?: { focus?: boolean }): Promise<number>;
+  open(url: string, opts?: { focus?: boolean; reload?: boolean }): Promise<number>;
   send<T>(tabId: number, msg: unknown, timeoutMs?: number): Promise<T>;
   close(): Promise<void>;
   /** bring the automation tab to the front (Facebook's composer does not open in a throttled background tab) */
@@ -128,6 +129,14 @@ export class RpaPublisher implements Publisher {
         // Evidence written immediately after Share (survives a closed tab during the profile check).
         if (r.status === 'clicked' && r.note) await log('info', 'publish', `${this.platform} ${post.id}: shared — ${r.note}`).catch(() => undefined);
         if (r.status === 'clicked' && r.pending) return { status: 'published', note: 'Pending admin approval in the group' };
+        // Instagram safety net: open the newest post; if it went out with an EMPTY caption, add it via ⋯ → Edit.
+        if (this.platform === 'instagram' && r.status === 'clicked' && post.text.trim()) {
+          const fixed = await this.fixInstagramCaption(acc, noLinkPlatform(this.platform) ? stripLinks(post.text) : post.text, startedAt).catch((e: Error) => ({ ok: false, url: undefined, reason: e.message }));
+          if (fixed.ok) return { status: 'published', url: fixed.url, ...(fixed.reason ? { note: fixed.reason } : r.note ? { note: r.note } : {}) };
+          await log('warn', 'publish', `instagram ${post.id}: caption check — ${fixed.reason ?? 'not confirmed'}`).catch(() => undefined);
+        }
+        // Seen in the feed right after Post (same tab) → confirmed now, no extra feed load.
+        if (r.status === 'clicked' && r.seen) return { status: 'published', url: r.url };
         // clicked or unknown: confirm on the feed before claiming success
         const found = post.replyTo
           ? await this.driver.send<{ found: boolean; url?: string }>(tabId, { cmd: 'findReply', targetUrl: post.replyTo, profileUrl: acc.profileUrl, fingerprint: post.fingerprint })
@@ -162,7 +171,18 @@ export class RpaPublisher implements Publisher {
    */
   private async lookFor(acc: Account, fp: string, since?: number): Promise<{ found: boolean; url?: string; pending?: boolean }> {
     if (this.platform === 'instagram') return this.lookForInstagram(acc, fp, since);
-    const tabId = await this.driver.open(acc.profileUrl);
+    // Facebook: the activity log first (newest first, full text), then the feed.
+    const fb = this.platform === 'facebook' || this.platform === 'fbgroup';
+    if (fb) {
+      const cat = this.platform === 'fbgroup' ? 'GROUPPOSTS' : 'MANAGEPOSTSPHOTOSANDVIDEOS';
+      const logTab = await this.driver.open(`https://www.facebook.com/me/allactivity?category_key=${cat}`, { reload: true });
+      const a = await this.driver
+        .send<{ found: boolean; url?: string }>(logTab, { cmd: 'findInActivity', platform: this.platform, fingerprint: fp, groupName: this.platform === 'fbgroup' ? acc.name : undefined })
+        .catch(() => ({ found: false as const, url: undefined }));
+      if (a.found) return a;
+    }
+    // Not in the log yet: reload the feed once so a post made seconds ago is really on the page before we look for it.
+    const tabId = await this.driver.open(acc.profileUrl, fb ? { reload: true } : undefined);
     const r = await this.driver.send<{ found: boolean; url?: string }>(tabId, { cmd: 'findExisting', platform: this.platform, fingerprint: fp });
     if (r.found || this.platform !== 'fbgroup') return r;
     const base = acc.profileUrl.replace(/\/$/, '');
@@ -189,13 +209,37 @@ export class RpaPublisher implements Publisher {
     return { found: false };
   }
 
+  /**
+   * Newest Instagram posts (a pinned post can come first): caption already there → ok; otherwise the new post with an
+   * EMPTY caption gets it via Edit (fixCaption refuses posts with another caption or older than 10 min).
+   */
+  private async fixInstagramCaption(acc: Account, text: string, since: number): Promise<{ ok: boolean; url?: string; reason?: string }> {
+    const fp = fingerprint(text);
+    const tabId = await this.driver.open(acc.profileUrl, { reload: true });
+    const { urls } = await this.driver.send<{ urls: string[] }>(tabId, { cmd: 'recentPosts', platform: 'instagram', max: INSTAGRAM_RECENT_CHECK });
+    const list = (urls ?? []).slice(0, 3);
+    for (const url of list) {
+      const t = await this.driver.open(url);
+      const r = await this.driver.send<{ found: boolean }>(t, { cmd: 'findExisting', platform: 'instagram', fingerprint: fp, since });
+      if (r.found) return { ok: true, url };
+    }
+    let last = 'newest post not found on the profile';
+    for (const url of list) {
+      const t = await this.driver.open(url, { focus: true });
+      const r = await this.driver.send<{ ok: boolean; reason?: string }>(t, { cmd: 'fixCaption', platform: 'instagram', text }, 120_000);
+      if (r.ok) return { ok: true, url, reason: 'Instagram dropped the caption on Share — added afterwards via Edit' };
+      last = r.reason ?? last;
+    }
+    return { ok: false, reason: last };
+  }
+
   private async confirm(acc: Account, fp: string, since?: number): Promise<{ found: boolean; url?: string; pending?: boolean }> {
     const end = Date.now() + this.confirmWindowMs;
     do {
       const r = await this.lookFor(acc, fp, since);
       if (r.found) return r;
-      if (Date.now() + 15_000 > end) break;
-      await new Promise((res) => setTimeout(res, 15_000));
+      if (Date.now() + 5_000 > end) break;
+      await new Promise((res) => setTimeout(res, 5_000));
     } while (Date.now() < end);
     return { found: false };
   }

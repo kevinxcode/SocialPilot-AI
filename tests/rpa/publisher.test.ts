@@ -139,6 +139,7 @@ describe('Facebook Group: "Your content" counts as success', () => {
     const f = fakeDriver({ findExisting: [{ found: false }, { found: true }] });
     expect(await new RpaPublisher('fbgroup', f.d, 0).findExisting(gPost)).toEqual({ found: true, pending: true });
     expect((f.d.open as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])).toEqual([
+      'https://www.facebook.com/me/allactivity?category_key=GROUPPOSTS', // activity log first
       'https://www.facebook.com/groups/685112895274502',
       'https://www.facebook.com/groups/685112895274502/my_pending_content',
     ]);
@@ -164,4 +165,50 @@ test('Instagram: the caption proof is logged right after Share, even if the prof
   expect((await new RpaPublisher('instagram', f.d, 0).publish(p, [new Blob(['x'], { type: 'image/png' })], {})).status).toBe('cancelled');
   const logs = await db.logs.toArray();
   expect(logs.some((l) => /shared — Caption: keys, counter 412\/2,200/.test(l.message))).toBe(true);
+});
+
+test('Facebook Page: after Post the feed is reloaded once before the check (cached feed hid the new post)', async () => {
+  await db.accounts.add({ id: 'fb', platform: 'facebook', name: 'CuciQu', profileUrl: 'https://www.facebook.com/cuciqu.pro', pageName: 'CuciQu' } as never);
+  const f = fakeDriver({ preflight: [{ ok: true }], publish: [{ status: 'clicked' }], findExisting: [{ found: true, url: 'https://www.facebook.com/cuciqu.pro/posts/1' }] });
+  const r = await new RpaPublisher('facebook', f.d, 0).publish({ ...post, platform: 'facebook', accountId: 'fb' }, [], {});
+  expect(r).toMatchObject({ status: 'published' });
+  expect(f.d.open).toHaveBeenLastCalledWith('https://www.facebook.com/cuciqu.pro', { reload: true });
+});
+
+test('Facebook: post seen in the same tab right after Post → published at once, no extra feed load', async () => {
+  await db.accounts.add({ id: 'fb2', platform: 'facebook', name: 'CuciQu', profileUrl: 'https://www.facebook.com/cuciqu.pro', pageName: 'CuciQu' } as never);
+  const f = fakeDriver({ preflight: [{ ok: true }], publish: [{ status: 'clicked', seen: true, url: 'https://www.facebook.com/cuciqu.pro/posts/2' }], findExisting: [{ found: false }] });
+  const r = await new RpaPublisher('facebook', f.d, 0).publish({ ...post, platform: 'facebook', accountId: 'fb2' }, [], {});
+  expect(r).toEqual({ status: 'published', url: 'https://www.facebook.com/cuciqu.pro/posts/2' });
+  expect(f.sent).not.toContain('findExisting');
+});
+
+test('Facebook Group: found in the activity log → done, group feed / pending pages never opened', async () => {
+  await db.groups.add({ id: 'g9', name: 'LOKER LAUNDRY BALI', url: 'https://www.facebook.com/groups/9', enabled: true } as never);
+  const f = fakeDriver({ findInActivity: [{ found: true, url: 'https://www.facebook.com/groups/9/posts/1' }], findExisting: [{ found: false }] });
+  const r = await new RpaPublisher('fbgroup', f.d, 0).findExisting({ ...post, platform: 'fbgroup', groupId: 'g9' });
+  expect(r).toEqual({ found: true, url: 'https://www.facebook.com/groups/9/posts/1' });
+  expect(f.sent).toEqual(['findInActivity']);
+  expect(f.d.send).toHaveBeenCalledWith(1, expect.objectContaining({ cmd: 'findInActivity', groupName: 'LOKER LAUNDRY BALI' }));
+});
+
+describe('Instagram: shared with an EMPTY caption (real 10 Nov) → caption added via Edit', () => {
+  const igPost: Post = { ...post, platform: 'instagram', accountId: 'ig9', text: 'Gak perlu ribet buka laporan satu per satu, cukup tanya bisnis Anda!', fingerprint: 'gak perlu ribet' };
+  beforeEach(async () => {
+    await db.accounts.add({ id: 'ig9', platform: 'instagram', name: 'cuciqu.app', profileUrl: 'https://www.instagram.com/cuciqu.app/' });
+  });
+
+  test('caption missing on the new post → fixCaption → published with a note', async () => {
+    const f = fakeDriver({ preflight: [{ ok: true }], publish: [{ status: 'clicked' }], recentPosts: [{ urls: ['https://www.instagram.com/p/NEW/'] }], findExisting: [{ found: false }], fixCaption: [{ ok: true }] });
+    const r = await new RpaPublisher('instagram', f.d, 0).publish(igPost, [new Blob(['x'], { type: 'image/png' })], {});
+    expect(r).toMatchObject({ status: 'published', url: 'https://www.instagram.com/p/NEW/', note: expect.stringMatching(/via Edit/) });
+    expect(f.sent).toContain('fixCaption');
+  });
+
+  test('caption already there → no Edit', async () => {
+    const f = fakeDriver({ preflight: [{ ok: true }], publish: [{ status: 'clicked' }], recentPosts: [{ urls: ['https://www.instagram.com/p/NEW/'] }], findExisting: [{ found: true }], fixCaption: [{ ok: true }] });
+    const r = await new RpaPublisher('instagram', f.d, 0).publish(igPost, [new Blob(['x'], { type: 'image/png' })], {});
+    expect(r).toMatchObject({ status: 'published', url: 'https://www.instagram.com/p/NEW/' });
+    expect(f.sent).not.toContain('fixCaption');
+  });
 });

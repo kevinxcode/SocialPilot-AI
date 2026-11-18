@@ -1,4 +1,4 @@
-import { captionBox, captionCounter, counterMatches, createPostInput, describeScreen, instagramHandle, runInstagramFindPost, runInstagramPreflight, runInstagramPublish, runInstagramRecent } from '@/services/publishing/rpa/instagram';
+import { captionBox, captionCounter, counterMatches, createPostInput, describeScreen, instagramHandle, runInstagramFindPost, runInstagramFixCaption, runInstagramPreflight, runInstagramPublish, runInstagramRecent } from '@/services/publishing/rpa/instagram';
 import { INSTAGRAM } from '@/services/publishing/rpa/selectors/instagram';
 import { fingerprint } from '@/services/publishing/fingerprint';
 
@@ -53,7 +53,8 @@ const PROFILE = `
  */
 /** accepts: which input method Instagram's editor really takes in (like Lexical: anything else only changes the screen). */
 type Accepts = 'paste' | 'insertText' | 'chars' | 'spaceOnly' | 'none';
-function fakeInstagram(opts: { menu?: boolean; share?: 'shared' | 'error' | 'nothing'; reelsNotice?: boolean; realCaptionStep?: boolean; slowSteps?: boolean; ignorePaste?: boolean; accepts?: Accepts } = {}) {
+function fakeInstagram(opts: { menu?: boolean; share?: 'shared' | 'error' | 'nothing'; reelsNotice?: boolean; realCaptionStep?: boolean; slowSteps?: boolean; ignorePaste?: boolean; accepts?: Accepts; wipeOnceAfterMs?: number } = {}) {
+  let wiped = false;
   const accepts: Accepts = opts.accepts ?? (opts.ignorePaste ? 'none' : 'paste');
   /** Lexical-like editor: only what arrives through a paste counts (writing into the DOM does not), like on instagram.com. */
   let model = '';
@@ -90,6 +91,15 @@ function fakeInstagram(opts: { menu?: boolean; share?: 'shared' | 'error' | 'not
         model += (e as ClipboardEvent).clipboardData?.getData('text/plain') ?? '';
         ed.innerHTML = model.split('\n').map((l) => `<p>${l || '<br>'}</p>`).join('');
         render();
+        // Instagram re-mounting its editor a moment later: the proven caption is gone (seen live 10 Nov).
+        if (opts.wipeOnceAfterMs != null && !wiped) {
+          wiped = true;
+          setTimeout(() => {
+            model = '';
+            ed.innerHTML = '<p><br></p>';
+            render();
+          }, opts.wipeOnceAfterMs);
+        }
       });
       // document.execCommand as the editor sees it: the screen always changes, the editor state only for accepted input.
       (document as unknown as { execCommand: unknown }).execCommand = (cmd: string, _ui: boolean, value?: string) => {
@@ -422,5 +432,32 @@ describe('Instagram confirmation', () => {
   test('[review#2] a too-short fingerprint never matches anything', async () => {
     at('/p/X/', '<main><article><h1>hi</h1></article></main>');
     expect((await runInstagramFindPost('hi', undefined, FAST)).found).toBe(false);
+  });
+});
+
+test('empty caption → refused before anything is uploaded or shared (a live post went out without caption)', async () => {
+  document.body.innerHTML = '';
+  const r = await runInstagramPublish(INSTAGRAM, { text: '   ', files: [], dryRun: false }, { timeoutMs: 300, pollMs: 20, delay: false });
+  expect(r).toEqual({ status: 'failed', reason: expect.stringMatching(/caption is empty/) });
+});
+
+test('[real-world 2026-11-10 #4] caption proven, then wiped by Instagram before Share → retyped, and the post is shared WITH the caption', async () => {
+  const ig = fakeInstagram({ realCaptionStep: true, wipeOnceAfterMs: 600 });
+  stop = ig.stop;
+  const r = await runInstagramPublish(INSTAGRAM, { text: CAPTION, files: [PNG], dryRun: false }, { timeoutMs: 8000, pollMs: 20 });
+  expect(r).toMatchObject({ status: 'clicked', note: expect.stringContaining('retyped before Share') });
+  expect(ig.shared).toHaveBeenCalledWith(CAPTION);
+}, 30_000);
+
+describe('runInstagramFixCaption (Edit safety net)', () => {
+  const POSTPAGE = (h1: string, ageMin: number) =>
+    `<main><article><time datetime="${new Date(Date.now() - ageMin * 60_000).toISOString()}"></time>${h1}<div role="button"><svg aria-label="More options"></svg></div></article></main>`;
+  test('never touches a post that already has another caption', async () => {
+    at('/p/X/', POSTPAGE('<h1>Caption lain yang sudah ada di post ini</h1>', 1));
+    expect(await runInstagramFixCaption(INSTAGRAM, CAPTION, { timeoutMs: 300, pollMs: 20, delay: false })).toMatchObject({ ok: false, reason: expect.stringMatching(/another caption/) });
+  });
+  test('never touches an old post', async () => {
+    at('/p/X/', POSTPAGE('', 60));
+    expect(await runInstagramFixCaption(INSTAGRAM, CAPTION, { timeoutMs: 300, pollMs: 20, delay: false })).toMatchObject({ ok: false, reason: expect.stringMatching(/older than 10 minutes/) });
   });
 });

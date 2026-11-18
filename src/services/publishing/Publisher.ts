@@ -24,6 +24,8 @@ export type RpaCommand =
   | { cmd: 'publish'; platform: Platform; input: { text: string; files: { name: string; type: string; dataUrl: string }[]; dryRun: boolean; pageName?: string; topic?: string } }
   /** since (Instagram): ignore posts older than this time (ms) */
   | { cmd: 'findExisting'; platform: Platform; fingerprint: string; since?: number }
+  | { cmd: 'findInActivity'; platform: Platform; fingerprint: string; groupName?: string }
+  | { cmd: 'fixCaption'; platform: Platform; text: string }
   | { cmd: 'scrapeFeed'; platform: Platform; max: number }
   | { cmd: 'scrapeGroups'; platform: Platform }
   /** Instagram: links of the newest posts on the profile grid */

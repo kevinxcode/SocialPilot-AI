@@ -31,6 +31,8 @@ export interface QueueDeps {
   pickTopic?: (post: Post) => Promise<string | undefined>;
   /** cloud: re-checks/renews the single-publisher lease right before each post; false = do not post */
   canPublish?: () => Promise<boolean>;
+  /** a post's image is not on this computer: let the AI choose a fitting one from the Media Library (ids), or undefined */
+  replaceMissingMedia?: (post: Post) => Promise<string[] | undefined>;
 }
 
 export function zonedToUtc(local: string, timezone: string): Date {
@@ -127,6 +129,7 @@ export async function autoReorder(now = Date.now()): Promise<number> {
       for (const p of list) {
         const q = await db.queue.where('postId').equals(p.id).first();
         if (!q || (q.lockedUntil && q.lockedUntil > now)) continue; // being worked on right now
+        if (q.immediate) continue; // "Publish now": the user asked for it now — never move it later
         // A post already planned later than its slot keeps its own (later) time.
         const at = Math.max(slot, p.scheduledAt ?? 0);
         if (at !== q.runAt || at !== p.scheduledAt) {
@@ -220,11 +223,11 @@ export async function retireGroup(groupId: string, reason: string, now = Date.no
  * A group post that failed every retry with a clear (non-ambiguous) error gets ONE more chance in another enabled
  * group that has not had a post in the last 24 h. Ambiguous posts never move: the text might already be live.
  */
-async function tryAnotherGroup(item: QueueItem, post: Post, reason: string): Promise<boolean> {
+async function tryAnotherGroup(item: QueueItem, post: Post, reason: string, now: number): Promise<boolean> {
   if (post.platform !== 'fbgroup' || !post.groupId || post.status === 'verifying' || /could not confirm/i.test(reason)) return false;
   const tried = [...(post.groupsTried ?? []), post.groupId];
   if (tried.length > 1) return false;
-  const since = Date.now() - 24 * 3600_000;
+  const since = now - 24 * 3600_000;
   const recent = new Set(
     (await db.posts.where('platform').equals('fbgroup').toArray())
       .filter((p) => p.id !== post.id && ((p.status === 'published' && (p.publishedAt ?? 0) > since) || ['scheduled', 'processing', 'verifying'].includes(p.status)))
@@ -233,21 +236,21 @@ async function tryAnotherGroup(item: QueueItem, post: Post, reason: string): Pro
   const next = (await db.groups.toArray()).find((g) => g.enabled && !tried.includes(g.id) && !recent.has(g.id));
   if (!next) return false;
   await finish(item.id);
-  await schedulePost(post.id, new Date());
+  await schedulePost(post.id, new Date(now));
   await db.posts.update(post.id, { groupId: next.id, groupsTried: tried, error: undefined, note: `Moved from another group after: ${reason}`.slice(0, 300) });
   await log('warn', 'groups', `Group post failed ${MAX_ATTEMPTS}× (${reason}) — moved to “${next.name}”`);
   return true;
 }
 
-async function fail(item: QueueItem, post: Post, reason: string, deps: QueueDeps) {
+async function fail(item: QueueItem, post: Post, reason: string, deps: QueueDeps, now: number) {
   if (post.platform === 'fbgroup' && post.groupId && PERMANENT_GROUP_FAILURE.test(reason)) {
     await finish(item.id);
     await setPost(post.id, { status: 'failed', error: reason }); // so retireGroup moves this post too
-    await retireGroup(post.groupId, reason);
+    await retireGroup(post.groupId, reason, now);
     deps.notify('Facebook Group switched off', reason);
     return;
   }
-  if (await tryAnotherGroup(item, post, reason)) return;
+  if (await tryAnotherGroup(item, post, reason, now)) return;
   await setPost(post.id, { status: 'failed', error: reason });
   await finish(item.id);
   await log('error', 'publish', `${label(post.platform)}: ${reason}`);
@@ -380,7 +383,7 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
       return;
     }
     if (post.attempts >= MAX_ATTEMPTS) {
-      await fail(item, post, `Could not confirm the post after ${MAX_ATTEMPTS} attempts — check the profile manually before reposting`, deps);
+      await fail(item, post, `Could not confirm the post after ${MAX_ATTEMPTS} attempts — check the profile manually before reposting`, deps, now);
       return;
     }
   }
@@ -392,7 +395,10 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   if (post.platform === 'fbgroup') {
     const sameGroup = last.find((p) => p.groupId === post.groupId);
     if (sameGroup && now - sameGroup.publishedAt! < DAY_MS) {
-      await release(item.id, sameGroup.publishedAt! + DAY_MS);
+      const until = sameGroup.publishedAt! + DAY_MS;
+      // Shown in Details: without it a deferred "Publish now" looks like nothing happened.
+      await setPost(post.id, { scheduledAt: until, nextRetryAt: until, error: `Waiting: this group already got a post in the last 24 h (max 1 per group per day) — next try ${new Date(until).toLocaleString()}. Move it to another group to post now.` });
+      await release(item.id, until);
       await log('info', 'queue', 'Facebook Group: deferred — max 1 post per group per 24 h');
       return;
     }
@@ -453,16 +459,46 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     return;
   }
 
+  // Facebook Page / Group: look at the feed first. A copy of this text can already be live (an earlier attempt that
+  // looked failed, or a twin post) — posting again would create a visible duplicate.
+  if ((post.platform === 'facebook' || post.platform === 'fbgroup') && !post.replyTo) {
+    const seen = await pub.findExisting(post).catch(() => ({ found: false as const, url: undefined, pending: undefined }));
+    if (seen.found) {
+      await log('warn', 'queue', `${label(post.platform)}: same text already live — marked published, not posted again`);
+      await markPublished(item, post, now, seen.url, deps);
+      return;
+    }
+  }
+
   const attempts = post.attempts + 1;
   await db.queue.update(item.id, { lockedUntil: Date.now() + PUBLISH_LOCK_MS });
   await setPost(post.id, { status: 'processing', attempts, error: undefined });
   // Media is loaded BEFORE posting: if it cannot be loaded nothing was posted, so this is a plain failure (retried).
-  const media = await deps.loadMedia(post.mediaIds).then(
+  let media = await deps.loadMedia(post.mediaIds).then(
     (m) => ({ ok: true as const, m }),
     (e: Error) => ({ ok: false as const, reason: e.message }),
   );
+  const missing = (m: typeof media) => !m.ok && /not on this computer/i.test(m.reason);
+  if (missing(media)) {
+    // The image is not on this computer: try once with one the AI picks from this computer's Media Library.
+    const ids = await deps.replaceMissingMedia?.(post).catch(() => undefined);
+    const again = ids?.length ? await deps.loadMedia(ids).then((m) => m, () => null) : null;
+    if (ids && again) {
+      post.mediaIds = ids;
+      await setPost(post.id, { mediaIds: ids, note: 'Original image was not on this computer — AI picked a matching one from the Media Library' });
+      await log('info', 'media', `${label(post.platform)}: missing image replaced by an AI-picked one`);
+      media = { ok: true as const, m: again };
+    }
+  }
   let res: PublishResult;
-  if (!media.ok) res = { status: 'failed', reason: media.reason };
+  if (!media.ok) {
+    // Still missing: it will be just as missing on the next try, so stop now instead of retrying 3 times.
+    if (missing(media)) {
+      await fail(item, { ...post, attempts }, media.reason, deps, now);
+      return;
+    }
+    res = { status: 'failed', reason: media.reason };
+  }
   else {
     try {
       res = await pub.publish({ ...post, attempts }, media.m, {});
@@ -481,7 +517,7 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     return;
   }
   if (res.status === 'dry-run') {
-    await fail(item, post, 'Unexpected dry-run result', deps);
+    await fail(item, post, 'Unexpected dry-run result', deps, now);
     return;
   }
   const retryAt = nextRetryAt(attempts, now);
@@ -498,7 +534,7 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
     await release(item.id, retryAt);
     await log('warn', 'publish', `${label(post.platform)}: attempt ${attempts} failed (${res.reason}); retrying at ${new Date(retryAt).toLocaleTimeString()}`);
   } else {
-    await fail(item, { ...post, attempts }, res.reason, deps);
+    await fail(item, { ...post, attempts }, res.reason, deps, now);
   }
 }
 

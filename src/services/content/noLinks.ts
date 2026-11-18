@@ -5,6 +5,8 @@ const URL_RE = /(?:https?:\/\/|www\.)\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|i
 /** Facebook Page / Group posts go out as text + image only: strip any URL and tidy the leftovers. */
 export function stripLinks(text: string): string {
   return text
+    .replace(/(?:\\r)?\\n/g, '\n') // older queued posts may still hold a literal backslash-n
+    .replace(new RegExp(`[ \\t]+(?:di|at)[ \\t]+(?:${URL_RE.source})(?=[ \\t]+\\p{L})`, 'giu'), '') // "di <url> dan" -> " dan"
     .replace(URL_RE, '')
     .replace(/[ \t]+([.,!?])/g, '$1')
     .replace(/(?:di|at|kunjungi|visit|cek|klik|link)\s*[:：]?\s*$/gim, '')

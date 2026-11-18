@@ -28,6 +28,6 @@ export const FACEBOOK: PlatformSelectors = {
     { css: 'div[role="button"]', label: '^(post|posting|kirim)$' },
     { css: 'div[role="button"]', text: '^(post|posting|kirim)$' },
   ],
-  postContainer: 'div[role="article"]',
+  postContainer: 'div[aria-posinset], div[role="article"]', // FB feed posts dropped role=article (10 Nov 2026)
   permalink: '(/posts/|story_fbid=|/permalink/|pfbid)',
 };

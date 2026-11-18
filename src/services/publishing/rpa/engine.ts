@@ -2,7 +2,7 @@
  * Content-script side of RPA publishing. Runs inside the Threads / Facebook tab.
  * Pure DOM logic (no chrome.* APIs) so it is unit-testable against fixtures.
  */
-import { normalizeText } from '../fingerprint';
+import { fingerprint, normalizeText } from '../fingerprint';
 import { attachFiles, click, closeSuggestions, dataUrlToFile, findBySelectors, humanDelay, readEditorText, typeText, waitFor } from './dom';
 import type { PlatformSelectors } from './selectors/types';
 
@@ -26,7 +26,7 @@ export interface PublishInput {
   topic?: string;
 }
 /** `note`: extra evidence for the user (e.g. Instagram: how the caption got into the editor and its counter). */
-export type EngineResult = { status: 'clicked'; pending?: boolean; topicSet?: boolean; topicIssue?: string; note?: string } | { status: 'dry-run'; topicIssue?: string; note?: string } | { status: 'unknown'; reason: string } | { status: 'failed'; reason: string };
+export type EngineResult = { status: 'clicked'; pending?: boolean; seen?: boolean; url?: string; topicSet?: boolean; topicIssue?: string; note?: string } | { status: 'dry-run'; topicIssue?: string; note?: string } | { status: 'unknown'; reason: string } | { status: 'failed'; reason: string };
 
 const T = (o: EngineOpts, ms: number) => Math.min(ms, o.timeoutMs ?? ms);
 
@@ -169,8 +169,7 @@ export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o:
   }
   const post = await waitFor(
     () => {
-      const b = findBySelectors(cfg.postButton, document.querySelector('[role="dialog"]') ?? document);
-      return b && b.getAttribute('aria-disabled') !== 'true' ? b : null;
+      return findPostButton(cfg, dialog);
     },
     T(o, 30_000),
     o.pollMs,
@@ -183,6 +182,11 @@ export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o:
     if (!closed) return { status: 'unknown', reason: 'Composer did not close after clicking Post' };
     if (cfg.pendingNotice && (await waitFor(() => findBySelectors(cfg.pendingNotice), T(o, 8000), o.pollMs))) {
       return { status: 'clicked', pending: true };
+    }
+    // Instant check: on a Facebook Page / Group the new post is inserted at the top of the feed in this same tab.
+    if (cfg.platform === 'facebook' || cfg.platform === 'fbgroup') {
+      const here = await runFindExisting(cfg, fingerprint(input.text), { ...o, timeoutMs: T(o, 8000) });
+      if (here.found) return { status: 'clicked', seen: true, url: here.url, topicSet, topicIssue };
     }
     return { status: 'clicked', topicSet, topicIssue };
   } catch (e) {
@@ -379,4 +383,49 @@ export async function runScrapeGroups(o: EngineOpts = {}): Promise<{ groups: { n
     await new Promise((r) => setTimeout(r, o.pollMs ?? 1500));
   }
   return { groups: collectGroups() };
+}
+
+/**
+ * The Post button lives in the composer dialog — never just the FIRST [role=dialog] in the page: Facebook keeps a hidden
+ * "Notifications" dialog before it (real bug 10 Nov: "Post button not found" on every Page post). Look in our composer,
+ * then in any other dialog (newest first, e.g. the "Post settings" step after Next), then the page.
+ */
+export function findPostButton(cfg: PlatformSelectors, composer?: Element | null): HTMLElement | null {
+  const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter((d) => d.getAttribute('aria-hidden') !== 'true').reverse();
+  const scopes: ParentNode[] = [...(composer && document.contains(composer) ? [composer] : []), ...dialogs, document];
+  for (const scope of scopes) {
+    const b = findBySelectors<HTMLElement>(cfg.postButton, scope);
+    if (b && b.getAttribute('aria-disabled') !== 'true') return b;
+  }
+  return null;
+}
+
+/**
+ * Facebook activity log ("Your posts" / "Group posts and comments"): newest first, full text, no "See more" and no feed
+ * ranking — the quickest reliable proof a post is live. Rows have no stable role, so each "View" link is walked up to
+ * its row. The same text is often posted to many groups, so for a group the row must also name that group.
+ */
+export async function runFindInActivity(fp: string, groupName?: string, o: EngineOpts = {}): Promise<{ found: boolean; url?: string }> {
+  if (!fp) return { found: false };
+  const short = fp.slice(0, 40).trim();
+  const group = groupName ? normalizeText(groupName) : '';
+  const hit = await waitFor(
+    () => {
+      for (const view of Array.from(document.querySelectorAll<HTMLAnchorElement>('a[aria-label^="View"], a[aria-label^="Lihat"]'))) {
+        let row: Element | null = view;
+        for (let i = 0; i < 16 && row; i++, row = row.parentElement) {
+          const raw = row.textContent ?? '';
+          if (raw.length > 4000 || (row !== view && row.querySelectorAll('a[aria-label^="View"], a[aria-label^="Lihat"]').length > 1)) break; // climbed past the row
+          const t = normalizeText(raw);
+          if ((t.includes(fp) || (short.length >= 25 && t.includes(short))) && (!group || t.includes(group))) return view;
+        }
+      }
+      return null;
+    },
+    T(o, 10_000),
+    o.pollMs,
+  );
+  if (!hit) return { found: false };
+  const href = hit.getAttribute('href');
+  return { found: true, url: href ? new URL(href, location.origin).toString().replace(/\?.*$/, '') : undefined };
 }

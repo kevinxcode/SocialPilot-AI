@@ -43,14 +43,16 @@ export async function pickTopic(text: string, preferred: string[], router: Route
         },
         {
           role: 'user',
-          content: `${list.length ? `Prefer one of these existing topics if it fits: ${list.join(', ')}.\nOtherwise suggest a popular Indonesian topic.\n\n` : ''}Post:\n${text.slice(0, 1500)}`,
+          content: `${list.length ? `Existing topics: ${list.join(', ')}.\nUse one of them ONLY if it clearly matches what this post is about; otherwise suggest a popular Indonesian topic that matches the post.\n\n` : ''}Post:\n${text.slice(0, 1500)}`,
         },
       ],
     });
     const t = cleanTopic(r.text);
     if (t) return matchPreferred(t, list);
   } catch {
-    /* fall through to the first preferred topic */
+    /* no topic */
   }
-  return list[0];
+  // A wrong topic shows the post to the wrong audience (seen live: a reports post tagged "Jadwal pegawai mobile"):
+  // better to post without one.
+  return undefined;
 }

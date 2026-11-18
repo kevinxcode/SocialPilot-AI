@@ -26,8 +26,8 @@ test('matchPreferred keeps the user spelling', () => {
   expect(matchPreferred('UMKM', ['Bisnis Laundry'])).toBe('UMKM');
 });
 
-test('pickTopic falls back to the first preferred topic when the AI fails', async () => {
-  expect(await pickTopic('teks', ['Bisnis Laundry'], router(new Error('429')))).toBe('Bisnis Laundry');
+test('pickTopic: AI fails → NO topic (never an unrelated first-in-list topic; real bug 10 Nov)', async () => {
+  expect(await pickTopic('teks', ['Bisnis Laundry'], router(new Error('429')))).toBeUndefined();
   expect(await pickTopic('teks', [], router(new Error('429')))).toBeUndefined();
 });
 
@@ -54,4 +54,11 @@ test('topics used in the last 20 h are not offered again', async () => {
   await topicForPost({ text: 'a' }, spy as never, 2000);
   expect(seen[0]).toMatch(/UMKM/);
   expect(seen[0]).not.toMatch(/Bisnis Laundry/);
+});
+
+test('pickTopic tells the AI to use a listed topic only when it matches the post', async () => {
+  const seen: string[] = [];
+  const spy = { generate: async (req: { messages: { content: string }[] }) => (seen.push(req.messages[1].content), { text: 'Laporan Laundry' }) as never };
+  expect(await pickTopic('Laporan bulanan siap cetak', ['Jadwal pegawai mobile'], spy as never)).toBe('Laporan Laundry');
+  expect(seen[0]).toMatch(/ONLY if it clearly matches/);
 });

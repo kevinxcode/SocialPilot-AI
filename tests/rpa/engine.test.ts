@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { typeText, readEditorText } from '@/services/publishing/rpa/dom';
-import { runPreflight, runPublish, runFindExisting } from '@/services/publishing/rpa/engine';
+import { runPreflight, runPublish, runFindExisting, findPostButton, runFindInActivity } from '@/services/publishing/rpa/engine';
 import { THREADS } from '@/services/publishing/rpa/selectors/threads';
 import { FACEBOOK } from '@/services/publishing/rpa/selectors/facebook';
 import { fingerprint } from '@/services/publishing/fingerprint';
@@ -211,4 +211,49 @@ describe('optional prompts are dismissed, never the composer', () => {
     await waitFor(() => false, 30, 5);
     expect(document.getElementById('nag')).toBeNull();
   });
+});
+
+test('Post button is found in the composer even when a hidden Notifications dialog comes first (real FB Page DOM, 10 Nov)', () => {
+  document.body.innerHTML = `
+    <div role="dialog" aria-label="Notifications"><div role="button" aria-label="See all">See all</div></div>
+    <div role="dialog" aria-label="Create post"><div>Post settings</div>
+      <div role="button" aria-label="Save post as draft">Save</div>
+      <div role="button" aria-label="Post"><span>Post</span></div>
+    </div>
+    <div role="dialog" aria-label="Post settings"><div>Post settings</div></div>`;
+  const b = findPostButton(FACEBOOK, null);
+  expect(b?.getAttribute('aria-label')).toBe('Post');
+});
+
+test('a disabled Post button is never returned', () => {
+  document.body.innerHTML = `<div role="dialog" aria-label="Create post"><div role="button" aria-label="Post" aria-disabled="true">Post</div></div>`;
+  expect(findPostButton(FACEBOOK, null)).toBeNull();
+});
+
+test('Facebook feed check finds a post whose container has aria-posinset but no role=article, even cut by "See more" (real DOM 10 Nov)', async () => {
+  document.body.innerHTML = `<div role="feed"><div aria-posinset="1"><div><div data-ad-rendering-role="story_message"><span>🚦 Penundaan pesanan sering jadi momok bagi laundry Anda?… See more</span></div></div></div></div>`;
+  const fp = fingerprint('🚦 Penundaan pesanan sering jadi momok bagi laundry Anda? Penundaan pesanan sering terjadi karena kurangnya koordinasi');
+  const r = await runFindExisting(FACEBOOK, fp, FAST);
+  expect(r.found).toBe(true);
+});
+
+const activityRow = (group: string, text: string, href: string) => `
+  <div><div><span>CuciQu Aplikasi Kasir Laundry posted in <a href="/groups/x">${group}</a>.</span></div>
+  <div>${text}</div><a aria-label="View, CuciQu Aplikasi Kasir Laundry" href="${href}">View</a></div>`;
+const GROUP_TEXT = 'Pernah nggak sih pelanggan datang ke outlet hanya untuk menanyakan status cucian mereka? Ini nih solusi simpelnya.';
+
+test('activity log: finds the group post in the RIGHT group when the same text went to several groups (real log 10 Nov)', async () => {
+  document.body.innerHTML = `<div>${activityRow('LAPAK CITRA RAYA CIKUPA', GROUP_TEXT, '/groups/1/posts/111/')}${activityRow('LOKER LAUNDRY BALI', GROUP_TEXT, '/groups/2/posts/222/?x=1')}</div>`;
+  const r = await runFindInActivity(fingerprint(GROUP_TEXT), 'LOKER LAUNDRY BALI', FAST);
+  expect(r).toEqual({ found: true, url: `${location.origin}/groups/2/posts/222/` });
+});
+
+test('activity log: not there for this group → not found', async () => {
+  document.body.innerHTML = `<div>${activityRow('LAPAK CITRA RAYA CIKUPA', GROUP_TEXT, '/groups/1/posts/111/')}</div>`;
+  expect((await runFindInActivity(fingerprint(GROUP_TEXT), 'Laundry Bali Comunitas', FAST)).found).toBe(false);
+});
+
+test('activity log: Page post found by text alone', async () => {
+  document.body.innerHTML = `<div><div><span>CuciQu Aplikasi Kasir Laundry added a new photo.</span><div>🚦 Penundaan pesanan sering jadi momok bagi laundry Anda? Penundaan pesanan sering terjadi</div><a aria-label="View" href="/cuciqu.pro/posts/9">View</a></div></div>`;
+  expect((await runFindInActivity(fingerprint('🚦 Penundaan pesanan sering jadi momok bagi laundry Anda? Penundaan pesanan sering terjadi karena'), undefined, FAST)).found).toBe(true);
 });

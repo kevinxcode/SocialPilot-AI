@@ -73,7 +73,11 @@ test('AI image pick uses the chosen number and falls back on nonsense', async ()
     { id: 'm2', name: 'setrika.png', type: 'image/png', size: 1, blob, tags: ['setrika'], usedCount: 0, createdAt: 2 },
   ]);
   const r = (text: string) => ({ generate: vi.fn(async () => ({ text })) });
-  expect((await pickMediaForText('Tips setrika', [], r('2')))?.id).toBe('m2');
+  // Candidates are shuffled: answer with whichever number the prompt gave setrika.png.
+  const pickSetrika = {
+    generate: vi.fn(async (req: { messages: { content: string }[] }) => ({ text: req.messages[1].content.match(/(\d+)\. setrika\.png/)![1] })),
+  };
+  for (let i = 0; i < 5; i++) expect((await pickMediaForText('Tips setrika', [], pickSetrika))?.id).toBe('m2');
   expect((await pickMediaForText('Tips setrika', ['kasir'], r('none')))?.id).toBe('m1'); // tag fallback
 });
 

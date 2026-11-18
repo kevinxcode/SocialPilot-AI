@@ -17,6 +17,7 @@ import { dailySummary } from '@/services/autopilot/insights';
  */
 import { topicForPost } from '@/services/content/topics';
 import { aiRouter } from '@/services/ai/AIRouter';
+import { markUsed, pickMediaForText } from '@/services/media/pick';
 import { db, log, seedIfEmpty } from '@/services/storage/db';
 import { autoReorder, removeDuplicates, repairOrphans, processDue, recoverOnStartup, schedulePost, type QueueDeps } from '@/services/publishing/PublishingQueue';
 import { publishers } from '@/services/publishing/rpa/RpaPublisher';
@@ -59,6 +60,13 @@ export const deps: QueueDeps = {
   runSlot: (item, now) => autopilotHooks.runSlot(item, now, { notify }),
   pickTopic: async (post) => ((await getSettings()).autoTopic ? topicForPost(post, aiRouter) : undefined),
   canPublish: () => holdsPublisherLease(),
+  // A post whose image is not on this computer: the AI picks the best-fitting image from this computer's Media Library.
+  replaceMissingMedia: async (post) => {
+    const m = await pickMediaForText(post.text, post.topic ? [post.topic] : [], aiRouter);
+    if (!m) return undefined;
+    await markUsed(m.id);
+    return [m.id];
+  },
 };
 
 /** Keeps the worker alive while a long RPA run is in progress. */
@@ -120,8 +128,13 @@ let ticking: Promise<void> | null = null;
 let tickStartedAt = 0;
 /** A run that hangs (e.g. a stuck browser API call) must not block the queue forever. */
 const TICK_STALE_MS = 12 * 60_000;
+let tickAgain = false;
 export function tick(): Promise<void> {
-  if (ticking && Date.now() - tickStartedAt < TICK_STALE_MS) return ticking;
+  if (ticking && Date.now() - tickStartedAt < TICK_STALE_MS) {
+    // A run is busy (e.g. a feed check): run once more right after it, so "Publish now" does not wait for the next alarm.
+    tickAgain = true;
+    return ticking;
+  }
   if (ticking) void log('warn', 'scheduler', 'Previous queue run looked stuck — starting a new one');
   tickStartedAt = Date.now();
   const started = tickStartedAt;
@@ -150,6 +163,10 @@ export function tick(): Promise<void> {
     } finally {
       stop();
       if (tickStartedAt === started) ticking = null;
+      if (tickStartedAt === started && tickAgain) {
+        tickAgain = false;
+        void tick();
+      }
     }
   })();
   return ticking;
