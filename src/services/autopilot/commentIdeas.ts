@@ -38,7 +38,7 @@ export function commentQuery(title: string, industry = ''): string {
   return [...core, field].filter(Boolean).join(' ');
 }
 
-/** Counts a search and moves the idea to the back; an idea that keeps finding nothing is dropped. */
+/** Counts a search that read posts but found none relevant; after the limit the idea is dropped. */
 export async function markIdeaSearched(id: string): Promise<void> {
   const list = await commentIdeas();
   const idea = list.find((i) => i.id === id);
@@ -53,6 +53,15 @@ export async function markIdeaSearched(id: string): Promise<void> {
   await save([...rest, { ...idea, searches }]);
 }
 
+/** Gives the next idea a turn without counting this search against the idea. */
+export async function moveIdeaToBack(id: string): Promise<void> {
+  const list = await commentIdeas();
+  const idea = list.find((i) => i.id === id);
+  if (idea) await save([...list.filter((i) => i.id !== id), idea]);
+}
+
 export async function removeCommentIdea(id: string): Promise<void> {
   await save((await commentIdeas()).filter((i) => i.id !== id));
 }
+
+export const COMMENT_IDEAS_KEY = KEY;

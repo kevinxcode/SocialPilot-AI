@@ -10,7 +10,7 @@ import { validatePost } from '@/services/content/validate';
 import { scrapeThreadsSearch } from '@/services/publishing/rpa/RpaPublisher';
 import { fingerprint } from '@/services/publishing/fingerprint';
 import { uid } from '@/lib/utils';
-import { commentIdeas, commentQuery, markIdeaSearched, removeCommentIdea } from './commentIdeas';
+import { commentIdeas, commentQuery, markIdeaSearched, moveIdeaToBack, removeCommentIdea } from './commentIdeas';
 import type { Post, Settings } from '@/types/models';
 
 const STUCK_MS = 6 * 3600_000;
@@ -72,10 +72,13 @@ async function run(now: number, deps: { router: RouterLike; scrape: typeof scrap
   const topics = idea ? [commentQuery(idea.title, brand.industry)] : (await enabledTopics()).slice(0, 3);
   if (!topics.length) topics.push(brand.industry || 'bisnis laundry');
   await chrome.storage.local.set({ commentsLastScan: now });
-  if (idea) await markIdeaSearched(idea.id);
   await log('info', 'comments', `Searching Threads for: ${topics.join(', ')}`);
   const results = await deps.scrape(topics, 5);
-  if (!results.some((r) => r.posts.length)) return void (await log('warn', 'comments', 'Threads search returned no posts (logged out of Threads, or search page changed?)'));
+  if (!results.some((r) => r.posts.length)) {
+    // Often a logged-out session: the idea keeps its chances, and the next one gets a turn.
+    if (idea) await moveIdeaToBack(idea.id);
+    return void (await log('warn', 'comments', 'Threads search returned no posts (logged out of Threads, or search page changed?)'));
+  }
   const seen = new Set((await db.posts.toArray()).map((p) => p.replyTo).filter(Boolean));
   const context = await buildBrandContext(brand.id);
   for (const candidate of results.flatMap((r) => r.posts).slice(0, 12)) {
@@ -108,5 +111,6 @@ async function run(now: number, deps: { router: RouterLike; scrape: typeof scrap
     if (saved && idea) await removeCommentIdea(idea.id);
     return;
   }
+  if (idea) await markIdeaSearched(idea.id);
   await log('info', 'comments', 'Search completed; no new sufficiently relevant reply found');
 }

@@ -4,21 +4,22 @@ import { FolderOpen, Link2, Loader2, Trash2, Upload } from 'lucide-react';
 import { Badge, Button, Card, Dialog, Empty, Input, Select, useToast } from '@/components/ui';
 import { db } from '@/services/storage/db';
 import { importFiles } from '@/services/media/importer';
-import { DRIVE_LINK_KEY, DRIVE_ORIGINS, parseDriveLink, syncDriveLink } from '@/services/media/driveSync';
+import { DRIVE_LINK_KEY, DRIVE_ORIGINS, forgetDriveSync, parseDriveLink, syncDriveLink } from '@/services/media/driveSync';
 import type { MediaItem } from '@/types/models';
 
 export const SUGGESTED_FOLDER = 'C:\\locale\\intelij\\londy-artifacts-marketing\\app-marketing';
 
-export function MediaThumb({ m, className }: { m: MediaItem; className?: string }) {
+/** `full`: the original image, uncropped (post previews). */
+export function MediaThumb({ m, className, full = false }: { m: MediaItem; className?: string; full?: boolean }) {
   const [url, setUrl] = useState<string | undefined>(m.thumb);
   useEffect(() => {
-    if (m.thumb || !m.type.startsWith('image/') || !m.blob) return; // no local copy yet (file missing)
+    if ((m.thumb && !full) || !m.type.startsWith('image/') || !m.blob) return; // no local copy yet (file missing)
     const u = URL.createObjectURL(m.blob);
     setUrl(u);
     return () => URL.revokeObjectURL(u);
-  }, [m]);
+  }, [m, full]);
   if (m.type.startsWith('video/')) return <div className={`flex items-center justify-center bg-muted text-xs ${className}`}>🎬 video</div>;
-  return url ? <img src={url} alt={m.name} className={`object-cover ${className}`} loading="lazy" /> : <div className={`bg-muted ${className}`} />;
+  return url ? <img src={url} alt={m.name} className={`${full ? 'object-contain' : 'object-cover'} ${className}`} loading="lazy" /> : <div className={`bg-muted ${className}`} />;
 }
 
 const fmtSize = (b: number) => (b > 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.round(b / 1e3)} KB`);
@@ -153,6 +154,7 @@ export function MediaLibraryPage() {
                 onClick={async () => {
                   if (!confirm(`Remove ALL ${media.length} items from the media library? Files on your computer are not touched.`)) return;
                   await db.media.clear();
+                  await forgetDriveSync();
                   toast('Media library cleared');
                 }}
               >

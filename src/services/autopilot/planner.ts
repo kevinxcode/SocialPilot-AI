@@ -26,6 +26,8 @@ export function planDay(date: string, s: Settings, best: number[] | null = null)
   const dayIndex = Math.floor(Date.parse(`${date}T00:00:00Z`) / 86_400_000);
   const types = a.contentTypes.length ? a.contentTypes : ['educational'];
   const out: QueueItem[] = [];
+  const groupCount = Math.max(1, a.groupPostsPerDay ?? 1);
+  const spreadGroups = groupCount > a.postsPerDay;
   for (let i = 0; i < a.postsPerDay; i++) {
     const minute = minutes[i];
     const hh = String(Math.floor(minute / 60)).padStart(2, '0');
@@ -41,10 +43,26 @@ export function planDay(date: string, s: Settings, best: number[] | null = null)
       if (!a.platforms[platform]) continue;
       out.push({ id: uid(), kind: 'slot', platform, slotKey, contentType, runAt: base + offset * 60_000 });
     }
-    // Facebook Groups: N per day, an hour after the first N slots (the runner picks a different group each time).
-    if (a.platforms.fbgroup && i < Math.max(1, a.groupPostsPerDay ?? 1)) {
+    // Facebook Groups: an hour after the main slots (the runner picks a different group each time).
+    if (a.platforms.fbgroup && !spreadGroups && i < groupCount) {
       out.push({ id: uid(), kind: 'slot', platform: 'fbgroup', slotKey: i === 0 ? `${date}#g` : `${date}#g${i}`, contentType, runAt: base + 60 * 60_000 });
     }
+  }
+  // More group posts than main slots: spread all of them evenly across the window.
+  if (a.platforms.fbgroup && spreadGroups) {
+    const count = groupCount;
+    slotMinutes(count, start, end, null).forEach((minute, i) => {
+      const hh = String(Math.floor(minute / 60)).padStart(2, '0');
+      const mm = String(minute % 60).padStart(2, '0');
+      out.push({
+        id: uid(),
+        kind: 'slot',
+        platform: 'fbgroup',
+        slotKey: i === 0 ? `${date}#g` : `${date}#g${i}`,
+        contentType: types[(dayIndex * count + i) % types.length],
+        runAt: fromZonedTime(`${date}T${hh}:${mm}:00`, s.timezone).getTime(),
+      });
+    });
   }
   return out;
 }

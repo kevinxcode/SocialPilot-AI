@@ -115,7 +115,9 @@ export function gapMinutes(platform: Platform, s: { minGapMinutes: number; group
 export async function autoReorder(now = Date.now()): Promise<number> {
   const settings = await getSettings();
   return db.transaction('rw', db.posts, db.queue, async () => {
-    const waiting = (await db.posts.where('status').equals('scheduled').toArray()).filter((p) => !p.paused && !p.replyTo);
+    // Autopilot posts on hold keep their own time until autopilot runs again.
+    const autopilotHeld = !settings.autopilot.enabled || settings.autopilot.paused;
+    const waiting = (await db.posts.where('status').equals('scheduled').toArray()).filter((p) => !p.paused && !p.replyTo && !(autopilotHeld && p.source === 'autopilot'));
     let moved = 0;
     for (const platform of [...new Set(waiting.map((p) => p.platform))]) {
       const gapMs = gapMinutes(platform, settings) * 60_000;
@@ -332,7 +334,9 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   }
   if (post.replyTo && post.status === 'scheduled') {
     const current = await getSettings();
-    if (!current.comments.enabled || !current.autopilot.enabled || current.autopilot.paused || !current.autopilot.platforms.threads) {
+    // Replies on our own posts have their own switch; "Automatic comments" covers replies on other people's posts.
+    const replySwitchOn = post.replyKind === 'own' ? current.autopilot.ownReplies !== false : current.comments.enabled;
+    if (!replySwitchOn || !current.autopilot.enabled || current.autopilot.paused || !current.autopilot.platforms.threads) {
       await release(item.id, now + 5 * 60_000);
       return;
     }

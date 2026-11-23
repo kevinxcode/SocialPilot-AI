@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { formatInTimeZone } from 'date-fns-tz';
-import { Button, Empty, Select, Table, Tabs, useToast } from '@/components/ui';
+import { Badge, Button, Empty, Select, Tabs, useToast } from '@/components/ui';
 import { CheckCircle2, ListOrdered, Loader2, Pause, Play, Send, X } from 'lucide-react';
 import { sendToSw } from '@/background/messages';
 import { autoReorder, cancel, markPublishedByUser, setPaused } from '@/services/publishing/PublishingQueue';
 import { useSettings } from '@/hooks/useSettings';
 import { db } from '@/services/storage/db';
 import { platformLabel } from '@/lib/platform';
-import type { Platform, Post, PostStatus } from '@/types/models';
+import { commentBlockReason } from '@/services/autopilot/comments';
+import { COMMENT_IDEAS_KEY, commentIdeas, removeCommentIdea, type CommentIdea } from '@/services/autopilot/commentIdeas';
+import type { MediaItem, Platform, Post, PostStatus } from '@/types/models';
+import { MediaThumb } from './MediaLibrary';
 import { PostEditor, StatusBadge, isOnHold, postDetail } from './PostEditor';
 
 /**
@@ -22,6 +25,19 @@ export function queueRank(p: Post, autopilotHeld = false): number {
 }
 
 type View = 'queue' | 'drafts' | 'history';
+
+function PostMedia({ ids }: { ids: string[] }) {
+  const key = ids.join('|');
+  const media = useLiveQuery(async () => (ids.length ? (await db.media.bulkGet(ids)).filter((m): m is MediaItem => !!m) : []), [key]) ?? [];
+  if (!media.length) return null;
+  return (
+    <div className={`grid gap-0.5 bg-muted ${media.length > 1 ? 'grid-cols-2' : ''}`}>
+      {media.map((m) => (
+        <MediaThumb key={m.id} m={m} full className="aspect-square w-full" />
+      ))}
+    </div>
+  );
+}
 
 /** `lockPlatform`: show only that platform's posts (used by the Instagram page); the platform filter is hidden. */
 export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { initialView?: View; lockPlatform?: Platform }) {
@@ -119,6 +135,18 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
     }
   };
   const fmt = (ms?: number) => (ms ? formatInTimeZone(ms, tz, 'dd MMM yyyy HH:mm') : '—');
+  const [ideas, setIdeas] = useState<CommentIdea[]>([]);
+  useEffect(() => {
+    const refresh = () => void commentIdeas().then(setIdeas);
+    refresh();
+    const on = (c: Record<string, chrome.storage.StorageChange>) => {
+      if (c[COMMENT_IDEAS_KEY]) refresh();
+    };
+    chrome.storage.onChanged.addListener(on);
+    return () => chrome.storage.onChanged.removeListener(on);
+  }, []);
+  const showCommentIdeas = view === 'queue' && ideas.length > 0 && (!platform || platform === 'threads') && !status;
+  const commentBlock = settings ? commentBlockReason(settings, posts, Date.now()) : null;
 
   return (
     <div className="space-y-4">
@@ -195,49 +223,91 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
           </button>
         </div>
       )}
+      {showCommentIdeas && (
+        <section className="space-y-2" aria-label="Comment ideas waiting">
+          <div>
+            <h2 className="text-sm font-semibold">Comment ideas waiting ({ideas.length})</h2>
+            <p className={`text-xs ${commentBlock ? 'text-amber-500' : 'text-muted-foreground'}`}>
+              {commentBlock ? `On hold: ${commentBlock}` : 'The AI searches Threads for these next. A reply appears in the queue once it finds a relevant post.'}
+            </p>
+          </div>
+          <div className="grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {ideas.map((i) => (
+              <article key={i.id} className="rounded-lg border border-border bg-card p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <Badge tone="info">Comment · Threads</Badge>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`Remove comment idea ${i.title}`}
+                    onClick={async () => {
+                      if (!confirm(`Remove "${i.title}" from the comment list?`)) return;
+                      await removeCommentIdea(i.id);
+                      setIdeas(await commentIdeas());
+                    }}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="text-sm font-medium">{i.title}</div>
+                <p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground">{i.body}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       {list.length === 0 ? (
-        <Empty>Nothing here yet.</Empty>
+        !showCommentIdeas && <Empty>Nothing here yet.</Empty>
       ) : (
-        <Table>
-          <thead>
-            <tr>
-              {view === 'queue' && (
-                <th className="w-8">
-                  <input type="checkbox" aria-label="Select all" checked={allShownSelected} onChange={toggleAll} className="h-4 w-4 cursor-pointer accent-primary" />
-                </th>
-              )}
-              <th>{view === 'history' ? 'When' : 'Scheduled'}</th>
-              <th>Platform</th>
-              <th>Post</th>
-              <th>Status</th>
-              <th>Details</th>
-            </tr>
-          </thead>
-          <tbody>
+        <>
+          {view === 'queue' && (
+            <label className="flex w-fit items-center gap-2 text-sm">
+              <input type="checkbox" aria-label="Select all" checked={allShownSelected} onChange={toggleAll} className="h-4 w-4 cursor-pointer accent-primary" />
+              Select all
+            </label>
+          )}
+          <div className="grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {shown.map((p) => (
-              <tr key={p.id} className={`cursor-pointer hover:bg-muted/50 ${selected.has(p.id) ? 'bg-primary/5' : ''} ${isOnHold(p, apHeld) ? '[&>td:not(:first-child)]:opacity-60' : ''}`} onClick={() => setOpen(p)}>
-                {view === 'queue' && (
-                  <td onClick={(e) => e.stopPropagation()}>
+              <article
+                key={p.id}
+                className={`cursor-pointer overflow-hidden rounded-lg border bg-card transition hover:ring-2 hover:ring-primary ${selected.has(p.id) ? 'border-primary ring-1 ring-primary' : 'border-border'}`}
+                onClick={() => setOpen(p)}
+              >
+                <div className="flex items-center gap-2 border-b border-border p-2.5">
+                  {view === 'queue' && (
                     <input
                       type="checkbox"
                       aria-label={`Select post ${p.text.slice(0, 30)}`}
                       disabled={!selectable(p)}
                       title={selectable(p) ? undefined : 'Being published right now'}
                       checked={selected.has(p.id)}
+                      onClick={(e) => e.stopPropagation()}
                       onChange={() => toggle(p.id)}
                       className="h-4 w-4 cursor-pointer accent-primary disabled:cursor-not-allowed"
                     />
-                  </td>
-                )}
-                <td className="whitespace-nowrap">{fmt(view === 'history' ? (p.publishedAt ?? p.updatedAt) : p.scheduledAt)}</td>
-                <td className="whitespace-nowrap">{platformLabel(p.platform)}{p.replyTo ? ' · Reply' : ''}</td>
-                <td className="max-w-md truncate">{p.text}</td>
-                <td>
-                  <span className="whitespace-nowrap">
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">
+                      {platformLabel(p.platform)}
+                      {p.replyTo ? ' · Reply' : ''}
+                      {p.topic ? ` · ${p.topic}` : ''}
+                    </div>
+                    <div className="text-xs text-muted-foreground">{fmt(view === 'history' ? (p.publishedAt ?? p.updatedAt) : p.scheduledAt)}</div>
+                  </div>
+                  <span className="shrink-0 whitespace-nowrap">
                     <StatusBadge post={p} autopilotHeld={apHeld} />
                   </span>
-                </td>
-                <td className="max-w-xs text-xs text-muted-foreground">
+                </div>
+                <div className={isOnHold(p, apHeld) ? 'opacity-60' : ''}>
+                  <PostMedia ids={p.mediaIds} />
+                  <div className="space-y-2 p-3">
+                    {p.replyTargetText && (
+                      <blockquote className="line-clamp-3 border-l-2 border-border pl-2 text-xs text-muted-foreground">{p.replyTargetText}</blockquote>
+                    )}
+                    <p className="whitespace-pre-wrap break-words text-sm">{p.text}</p>
+                  </div>
+                </div>
+                <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
                   {p.url ? (
                     <a href={p.url} target="_blank" rel="noreferrer" className="text-primary underline" onClick={(e) => e.stopPropagation()}>
                       open post
@@ -252,16 +322,16 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
                     (() => {
                       const d = postDetail(p, fmt, apHeld);
                       return (
-                        <span className={`line-clamp-2 ${d.tone === 'error' ? 'text-red-500' : d.tone === 'warn' ? 'text-amber-500' : ''}`} title={d.text}>
+                        <span className={d.tone === 'error' ? 'text-red-500' : d.tone === 'warn' ? 'text-amber-500' : ''} title={d.text}>
                           {d.text}
                         </span>
                       );
                     })()}
-                </td>
-              </tr>
+                </div>
+              </article>
             ))}
-          </tbody>
-        </Table>
+          </div>
+        </>
       )}
       {list.length > 0 && list.length <= limit && (
         <div className="py-3 text-center text-xs text-muted-foreground">All {list.length} posts shown</div>

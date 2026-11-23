@@ -50,10 +50,10 @@ test('a selected idea drives the search and leaves the list once its reply is qu
   expect((await commentIdeas()).map((i) => i.id)).toEqual(['2']);
 });
 
-test('an idea without a usable post is dropped after 3 searches', async () => {
+test('an idea without a relevant post is dropped after 3 searches', async () => {
   await addCommentIdeas([idea('1', 'Catatan laundry')]);
-  const scrape = vi.fn(async (q: string[]) => [{ query: q[0], posts: [] }]);
-  for (let i = 0; i < 3; i++) await automaticComments(now + i * HALF_HOUR, { router: answer(true), scrape });
+  const scrape = vi.fn(async (q: string[]) => found(q[0]));
+  for (let i = 0; i < 3; i++) await automaticComments(now + i * HALF_HOUR, { router: answer(false), scrape });
   expect(await commentIdeas()).toHaveLength(0);
   expect(scrape).toHaveBeenCalledTimes(3);
 });

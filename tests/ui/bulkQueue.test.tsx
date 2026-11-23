@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui';
 import { ScheduledPostsPage } from '@/pages/ScheduledPosts';
 import { db, resetDb } from '@/services/storage/db';
@@ -57,12 +57,35 @@ test('status is never "scheduled" and "paused" at once; details say what happens
   await db.posts.update('p2', { error: 'Post button not found or disabled', nextRetryAt: 1 });
   show();
   await screen.findByText(/paused by you/i);
-  const row1 = screen.getByLabelText(/select post teks p1/i).closest('tr')!;
+  const row1 = screen.getByLabelText(/select post teks p1/i).closest('article')!;
   expect(row1.textContent).toContain('paused');
   expect(row1.textContent).not.toContain('scheduled');
   expect(row1.textContent).not.toContain('Waiting');
   expect(postDetail((await db.posts.get('p2'))!, fmt).text).toBe('Last attempt failed: Post button not found or disabled · next try 10:40');
   expect(postDetail({ ...(await db.posts.get('p2'))!, error: undefined, source: 'autopilot' }, fmt, true).text).toMatch(/autopilot is paused/i);
+});
+
+test('a queue card shows the full text, image and the post a reply answers', async () => {
+  const long = `Awal teks. ${'isi panjang '.repeat(40)}Akhir teks.`;
+  await db.media.add({ id: 'img', name: 'promo.png', type: 'image/png', size: 1, tags: [], usedCount: 0, createdAt: 0, thumb: 'data:image/webp;base64,AA==' });
+  await db.posts.update('p1', { text: long, mediaIds: ['img'] });
+  await db.posts.update('p2', { replyTo: 'https://www.threads.com/@x/post/abc', replyTargetText: 'Post yang dibalas' });
+  show();
+  const card = (await screen.findByLabelText(/select post awal teks/i)).closest('article')!;
+  expect(card.textContent).toContain('Akhir teks.');
+  await waitFor(() => expect(card.querySelector('img[alt="promo.png"]')).toBeTruthy());
+  expect(screen.getByLabelText(/select post teks p2/i).closest('article')!.textContent).toContain('Post yang dibalas');
+});
+
+test('comment ideas waiting are listed with the reason and can be removed', async () => {
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
+  await chrome.storage.local.set({ commentIdeas: [{ id: 'i1', title: 'Ide komentar laundry', body: 'Isi ide' }] });
+  show();
+  const title = await screen.findByText('Ide komentar laundry');
+  expect(screen.getByText(/autopilot is off/i)).toBeTruthy();
+  fireEvent.click(within(title.closest('article')!).getByRole('button', { name: /remove comment idea/i }));
+  await waitFor(() => expect(screen.queryByText('Ide komentar laundry')).toBeNull());
+  expect((await chrome.storage.local.get('commentIdeas')).commentIdeas).toEqual([]);
 });
 
 test('queue order: being published first, then scheduled (earliest first), paused at the bottom', async () => {

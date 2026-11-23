@@ -58,7 +58,7 @@ export interface DriveSyncResult {
   failed: string[];
 }
 
-type Remote = { id: string; name: string; path: string };
+type Remote = { id: string; name: string; path: string; single?: boolean };
 
 async function listFolder(id: string, prefix: string, doFetch: typeof fetch, seen: Set<string>, depth: number, out: Remote[], res: DriveSyncResult) {
   if (seen.has(id) || depth > MAX_DEPTH) return;
@@ -78,16 +78,49 @@ async function listFolder(id: string, prefix: string, doFetch: typeof fetch, see
   }
 }
 
+/** The file name Drive sends with a download; never contains a folder path. */
+function headerFileName(disposition: string | null): string | undefined {
+  if (!disposition) return undefined;
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  let name = disposition.match(/filename="([^"]+)"/i)?.[1];
+  if (encoded) {
+    try {
+      name = decodeURIComponent(encoded);
+    } catch {
+      /* keep the plain name */
+    }
+  }
+  return name?.split(/[/\\]/).pop()?.trim() || undefined;
+}
+
+/** A single-file link has no listing, so the name and type come from the download itself. */
+function singleFileName(item: Remote, r: Response): string {
+  const named = headerFileName(r.headers.get('content-disposition'));
+  if (named) return named;
+  const type = (r.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+  const ext = Object.entries(MIME).find(([, mime]) => mime === type)?.[0];
+  if (!ext) throw new Error('not an image or video');
+  return `${item.name}.${ext}`;
+}
+
 async function download(item: Remote, doFetch: typeof fetch): Promise<File> {
   const r = await doFetch(`https://drive.usercontent.google.com/download?id=${item.id}&export=download&confirm=t`, { credentials: 'omit' });
   // Drive answers with an HTML page when a file is private or over its download quota.
   if (!r.ok || (r.headers.get('content-type') ?? '').includes('text/html')) throw new Error('not public or download limit reached');
+  const name = item.single ? singleFileName(item, r) : item.name;
+  const type = mimeOf(name);
+  if (!type) throw new Error('not an image or video');
   if (Number(r.headers.get('content-length') ?? 0) > MAX_BYTES) throw new Error('larger than 200 MB');
   const blob = await r.blob();
   if (blob.size > MAX_BYTES) throw new Error('larger than 200 MB');
-  const file = new File([blob], item.name, { type: mimeOf(item.name) });
-  Object.defineProperty(file, 'webkitRelativePath', { value: item.path });
+  const file = new File([blob], name, { type });
+  Object.defineProperty(file, 'webkitRelativePath', { value: item.single ? `Google Drive/${name}` : item.path });
   return file;
+}
+
+/** After the library is cleared, the next sync may bring every Drive file back. */
+export async function forgetDriveSync(): Promise<void> {
+  await chrome.storage.local.remove(SYNCED_KEY);
 }
 
 export async function syncDriveLink(link: string, opts: { fetch?: typeof fetch; onProgress?: (done: number, total: number) => void } = {}): Promise<DriveSyncResult> {
@@ -97,7 +130,7 @@ export async function syncDriveLink(link: string, opts: { fetch?: typeof fetch; 
   const res: DriveSyncResult = { added: 0, skipped: 0, duplicates: 0, failed: [] };
   const remote: Remote[] = [];
   if (parsed.kind === 'folder') await listFolder(parsed.id, '', doFetch, new Set(), 0, remote, res);
-  else remote.push({ id: parsed.id, name: `drive-${parsed.id}.jpg`, path: `Google Drive/drive-${parsed.id}.jpg` });
+  else remote.push({ id: parsed.id, name: `drive-${parsed.id}`, path: 'Google Drive', single: true });
 
   // Files already synced are not downloaded again, and media deleted from the library does not come back.
   const synced = new Set(((await chrome.storage.local.get(SYNCED_KEY))[SYNCED_KEY] as string[] | undefined) ?? []);
