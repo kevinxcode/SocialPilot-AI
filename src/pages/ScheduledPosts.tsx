@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { formatInTimeZone } from 'date-fns-tz';
 import { Badge, Button, Empty, Select, Table, Tabs, useToast } from '@/components/ui';
-import { CheckCircle2, LayoutGrid, List, ListOrdered, Loader2, Pause, Play, Send, X } from 'lucide-react';
+import { CheckCircle2, LayoutGrid, MessageCircle, List, ListOrdered, Loader2, Pause, Play, Send, X } from 'lucide-react';
 import { sendToSw } from '@/background/messages';
 import { autoReorder, cancel, markPublishedByUser, setPaused } from '@/services/publishing/PublishingQueue';
 import { useSettings } from '@/hooks/useSettings';
@@ -48,7 +48,8 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
   const { settings } = useSettings();
   const tz = settings?.timezone ?? 'Asia/Jakarta';
   const [view, setView] = useState<View>(initialView);
-  const [platformFilter, setPlatform] = useState<'' | Platform>('');
+  // 'comments': replies on Threads posts plus the comment ideas still waiting for a matching post
+  const [platformFilter, setPlatform] = useState<'' | Platform | 'comments'>('');
   const platform = lockPlatform ?? platformFilter;
   const [status, setStatus] = useState<'' | PostStatus>('');
   const [open, setOpen] = useState<Post | null>(null);
@@ -65,7 +66,7 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
         ? ['scheduled', 'processing', 'verifying'].includes(p.status)
         : ['published', 'failed', 'cancelled'].includes(p.status);
   const list = posts
-    .filter((p) => inView(p) && (!platform || p.platform === platform) && (!status || p.status === status))
+    .filter((p) => inView(p) && (platform === 'comments' ? !!p.replyTo : !platform || p.platform === platform) && (!status || p.status === status))
     .sort((a, b) =>
       view === 'queue'
         ? queueRank(a, apHeld) - queueRank(b, apHeld) || (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0)
@@ -149,8 +150,41 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
     chrome.storage.onChanged.addListener(on);
     return () => chrome.storage.onChanged.removeListener(on);
   }, []);
-  const showCommentIdeas = view === 'queue' && ideas.length > 0 && (!platform || platform === 'threads') && !status;
+  const showCommentIdeas = view === 'queue' && ideas.length > 0 && (!platform || platform === 'threads' || platform === 'comments') && !status;
   const commentBlock = settings ? commentBlockReason(settings, posts, Date.now()) : null;
+  const [commenting, setCommenting] = useState<string | null>(null);
+  const commentNowFor = async (i: CommentIdea) => {
+    if (!confirm(`Search Threads for "${i.title}" now and post a reply right away? (Ignores the autopilot window and the daily comment limit.)`)) return;
+    setCommenting(i.id);
+    try {
+      const r = await sendToSw({ type: 'commentNow', ideaId: i.id });
+      toast(r.message ?? (r.ok ? 'Started' : 'Failed'), r.ok ? 'ok' : 'err');
+      setIdeas(await commentIdeas());
+    } finally {
+      setCommenting(null);
+    }
+  };
+  const removeIdea = async (i: CommentIdea) => {
+    if (!confirm(`Remove "${i.title}" from the comment list?`)) return;
+    await removeCommentIdea(i.id);
+    setIdeas(await commentIdeas());
+  };
+  const ideaActions = (i: CommentIdea) => (
+    <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      <Button size="sm" disabled={!!commenting} onClick={() => commentNowFor(i)} title="Find a relevant Threads post for this idea and reply now — no time window or daily limit">
+        {commenting === i.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />} Comment now
+      </Button>
+      <Button size="icon" variant="ghost" aria-label={`Remove comment idea ${i.title}`} onClick={() => removeIdea(i)}>
+        <X className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+  const ideasNote = showCommentIdeas && (
+    <p className={`text-xs ${commentBlock ? 'text-amber-500' : 'text-muted-foreground'}`}>
+      {ideas.length} comment idea(s) waiting.{' '}
+      {commentBlock ? `Automatic: on hold — ${commentBlock}. Use “Comment now” to reply right away.` : 'The AI searches Threads for these next; a reply appears in the queue once it finds a relevant post.'}
+    </p>
+  );
   const [layout, setLayoutState] = useState<Layout>(() => (localStorage.getItem(LAYOUT_KEY) === 'list' ? 'list' : 'grid'));
   const setLayout = (l: Layout) => {
     setLayoutState(l);
@@ -248,6 +282,7 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
             <option value="facebook">Facebook Page</option>
             <option value="fbgroup">Facebook Group</option>
             <option value="instagram">Instagram</option>
+            <option value="comments">Comments (Threads)</option>
           </Select>
           )}
           <Select className="w-40" value={status} onChange={(e) => setStatus(e.target.value as '' | PostStatus)} aria-label="Status filter">
@@ -283,44 +318,12 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
           </button>
         </div>
       )}
-      {showCommentIdeas && (
-        <section className="space-y-2" aria-label="Comment ideas waiting">
-          <div>
-            <h2 className="text-sm font-semibold">Comment ideas waiting ({ideas.length})</h2>
-            <p className={`text-xs ${commentBlock ? 'text-amber-500' : 'text-muted-foreground'}`}>
-              {commentBlock ? `On hold: ${commentBlock}` : 'The AI searches Threads for these next. A reply appears in the queue once it finds a relevant post.'}
-            </p>
-          </div>
-          <div className={layout === 'grid' ? 'grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3' : 'grid gap-2'}>
-            {ideas.map((i) => (
-              <article key={i.id} className="rounded-lg border border-border bg-card p-3">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <Badge tone="info">Comment · Threads</Badge>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label={`Remove comment idea ${i.title}`}
-                    onClick={async () => {
-                      if (!confirm(`Remove "${i.title}" from the comment list?`)) return;
-                      await removeCommentIdea(i.id);
-                      setIdeas(await commentIdeas());
-                    }}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-                <div className="text-sm font-medium">{i.title}</div>
-                <p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground">{i.body}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-      {list.length === 0 ? (
-        !showCommentIdeas && <Empty>Nothing here yet.</Empty>
+      {list.length === 0 && !showCommentIdeas ? (
+        <Empty>Nothing here yet.</Empty>
       ) : (
         <>
-          {view === 'queue' && (
+          {ideasNote}
+          {view === 'queue' && list.length > 0 && (
             <label className="flex w-fit items-center gap-2 text-sm">
               <input type="checkbox" aria-label="Select all" checked={allShownSelected} onChange={toggleAll} className="h-4 w-4 cursor-pointer accent-primary" />
               Select all
@@ -339,6 +342,20 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
                 </tr>
               </thead>
               <tbody>
+                {showCommentIdeas &&
+                  ideas.map((i) => (
+                    <tr key={`idea-${i.id}`}>
+                      {view === 'queue' && <td />}
+                      <td className="max-w-md">
+                        <div className="text-sm font-medium">{i.title}</div>
+                        <div className="line-clamp-2 break-words text-xs text-muted-foreground" title={i.body}>{i.body}</div>
+                      </td>
+                      <td className="whitespace-nowrap text-xs text-muted-foreground">when a match is found</td>
+                      <td className="whitespace-nowrap">Threads · Comment</td>
+                      <td><Badge tone="info">idea</Badge></td>
+                      <td>{ideaActions(i)}</td>
+                    </tr>
+                  ))}
                 {shown.map((p) => (
                   <tr key={p.id} className={`cursor-pointer hover:bg-muted/50 ${selected.has(p.id) ? 'bg-primary/5' : ''} ${isOnHold(p, apHeld) ? '[&>td:not(:first-child)]:opacity-60' : ''}`} onClick={() => setOpen(p)}>
                     {view === 'queue' && <td>{postCheckbox(p)}</td>}
@@ -362,6 +379,17 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
             </Table>
           ) : (
           <div className="grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {showCommentIdeas &&
+              ideas.map((i) => (
+                <article key={`idea-${i.id}`} className="rounded-lg border border-dashed border-border bg-card p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <Badge tone="info">Comment · Threads</Badge>
+                    {ideaActions(i)}
+                  </div>
+                  <div className="text-sm font-medium">{i.title}</div>
+                  <p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground">{i.body}</p>
+                </article>
+              ))}
             {shown.map((p) => (
               <article
                 key={p.id}

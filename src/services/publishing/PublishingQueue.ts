@@ -326,13 +326,14 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
   // (An ambiguous attempt in 'verifying' is still checked below, so it is never lost; it is just not reposted.)
   if (post.status === 'scheduled') {
     const ap = post.source === 'autopilot' ? (await getSettings()).autopilot : null;
-    if (post.paused || (ap && (!ap.enabled || ap.paused))) {
+    // "Publish now" / "Comment now": the user asked for it explicitly, so autopilot being off/paused does not hold it.
+    if (post.paused || (!item.immediate && ap && (!ap.enabled || ap.paused))) {
       // Re-check in 5 minutes, but keep the post's own scheduled time (it is shown, and used on resume).
       await db.queue.update(item.id, { lockedUntil: undefined, runAt: now + 5 * 60_000 });
       return;
     }
   }
-  if (post.replyTo && post.status === 'scheduled') {
+  if (post.replyTo && post.status === 'scheduled' && !item.immediate) {
     const current = await getSettings();
     // Replies on our own posts have their own switch; "Automatic comments" covers replies on other people's posts.
     const replySwitchOn = post.replyKind === 'own' ? current.autopilot.ownReplies !== false : current.comments.enabled;

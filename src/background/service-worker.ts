@@ -1,6 +1,6 @@
 import { IDEA_JOB_KEY, jobIsLive, runIdeaJob, type IdeaJob } from '@/services/content/ideasToQueue';
 import { cleanGroupName } from '@/services/publishing/rpa/engine';
-import { automaticComments } from '@/services/autopilot/comments';
+import { automaticComments, commentNow } from '@/services/autopilot/comments';
 import { uid } from '@/lib/utils';
 import { formatInTimeZone } from 'date-fns-tz';
 import { maybeDailyTrending, researchTrending } from '@/services/content/trending';
@@ -249,6 +249,16 @@ async function handle(msg: SwRequest): Promise<SwResponse> {
       return r.status === 'dry-run'
         ? { ok: true, message: `Composer filled, Post was NOT clicked. ${'note' in r && r.note ? `${r.note}. ` : ''}Check the automation tab, then close it.` }
         : { ok: false, message: 'reason' in r ? r.reason : r.status };
+    }
+    case 'commentNow': {
+      const stop = keepAlive();
+      try {
+        const message = await commentNow(msg.ideaId);
+        void tick();
+        return { ok: message.startsWith('Reply queued'), message };
+      } finally {
+        stop();
+      }
     }
     case 'publishNow': {
       await schedulePost(msg.postId, new Date(), { immediate: true });

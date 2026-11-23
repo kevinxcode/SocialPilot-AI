@@ -6,6 +6,7 @@ export type SwRequest =
   | { type: 'dryRun'; platform: Platform; text: string; mediaIds?: string[]; groupId?: string }
   | { type: 'checkGroup'; groupId: string }
   | { type: 'publishNow'; postId: string }
+  | { type: 'commentNow'; ideaId?: string }
   | { type: 'tick' }
   | { type: 'researchTrending' }
   | { type: 'scanGroups' }

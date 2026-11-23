@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { CheckCircle2, ChevronDown, ChevronRight, ExternalLink, Loader2, Plus, Search, Sparkles, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, RotateCw, ChevronDown, ChevronRight, ExternalLink, Loader2, Plus, Search, Sparkles, Trash2, XCircle } from 'lucide-react';
 import { Badge, Button, Card, CardTitle, Empty, Field, Input, Switch, Textarea, useToast } from '@/components/ui';
 import { db } from '@/services/storage/db';
 import { sendToSw } from '@/background/messages';
@@ -50,12 +50,13 @@ async function relevantGroupIds(groups: FbGroup[]): Promise<string[]> {
 
 type Result = { ok: boolean; message?: string };
 
-function GroupRow({ g, busy, onRun, result }: { g: FbGroup; busy: string | null; onRun: (id: string, k: 'check' | 'dry') => void; result?: Result }) {
+function GroupRow({ g, busy, onRun, result, checked, onToggle }: { g: FbGroup; busy: string | null; onRun: (id: string, k: 'check' | 'dry') => void; result?: Result; checked: boolean; onToggle: () => void }) {
   const [open, setOpen] = useState(false);
   const status = result ?? (g.lastCheckOk === undefined ? undefined : { ok: g.lastCheckOk, message: g.lastCheckMessage });
   return (
     <li className="py-2">
       <div className="flex items-center gap-3">
+        <input type="checkbox" className="h-4 w-4 shrink-0 accent-primary" checked={checked} onChange={onToggle} aria-label={`Select ${g.name}`} />
         <Switch checked={g.enabled} onChange={(v) => db.groups.update(g.id, { enabled: v, ...(v ? { disabledReason: undefined } : {}) })} label={`Enable ${g.name}`} />
         <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={() => setOpen((o) => !o)}>
           {open ? <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
@@ -109,7 +110,7 @@ export function GroupsPage() {
   const toast = useToast();
   const groups = useLiveQuery(() => db.groups.toArray(), []) ?? [];
   const [q, setQ] = useState('');
-  const [show, setShow] = useState<'all' | 'on' | 'off'>('all');
+  const [show, setShow] = useState<'all' | 'on' | 'off' | 'failed'>('all');
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
@@ -119,8 +120,10 @@ export function GroupsPage() {
   const [msg, setMsg] = useState<Result | null>(null);
 
   const enabledCount = groups.filter((g) => g.enabled).length;
+  const failed = (g: (typeof groups)[number]) => (results[g.id] ? !results[g.id].ok : g.lastCheckOk === false);
+  const failedCount = groups.filter(failed).length;
   const visible = groups
-    .filter((g) => (show === 'all' || (show === 'on') === g.enabled) && g.name.toLowerCase().includes(q.toLowerCase()))
+    .filter((g) => (show === 'all' || (show === 'failed' ? failed(g) : (show === 'on') === g.enabled)) && g.name.toLowerCase().includes(q.toLowerCase()))
     .sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name));
 
   const wrap = async (key: string, fn: () => Promise<Result>) => {
@@ -168,7 +171,35 @@ export function GroupsPage() {
         ? await sendToSw({ type: 'checkGroup', groupId: id })
         : await sendToSw({ type: 'dryRun', platform: 'fbgroup', groupId: id, text: 'Tes SocialPilot AI — dry run, tidak akan diposting. 🧺' });
     setResults((s) => ({ ...s, [id]: r }));
+    if (kind === 'check' && !r.ok) await db.groups.update(id, { enabled: false }); // failed check → stop posting there
     setBusy(null);
+  };
+
+  const [recheck, setRecheck] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const chosen = visible.filter((g) => selected.has(g.id));
+  const allVisibleSelected = visible.length > 0 && visible.every((g) => selected.has(g.id));
+  const deleteSelected = async () => {
+    if (!chosen.length || !confirm(`Delete ${chosen.length} group(s)? They are removed from SocialPilot (you stay a member on Facebook).`)) return;
+    await db.groups.bulkDelete(chosen.map((g) => g.id));
+    setSelected(new Set());
+    toast(`${chosen.length} group(s) deleted`);
+  };
+  const recheckFailed = async () => {
+    const ids = groups.filter(failed).map((g) => g.id);
+    if (!ids.length) return;
+    let ok = 0;
+    for (let i = 0; i < ids.length; i++) {
+      setRecheck(`${i + 1}/${ids.length}`);
+      setBusy(`check:${ids[i]}`);
+      const r = await sendToSw({ type: 'checkGroup', groupId: ids[i] }).catch((e: Error) => ({ ok: false, message: e.message }));
+      setResults((s) => ({ ...s, [ids[i]]: r }));
+      if (r.ok) ok++;
+      else await db.groups.update(ids[i], { enabled: false }); // still failing → autopilot must not post there
+    }
+    setBusy(null);
+    setRecheck(null);
+    setMsg({ ok: ok === ids.length, message: `Re-checked ${ids.length} group(s): ${ok} OK, ${ids.length - ok} still failed.` });
   };
 
   return (
@@ -216,18 +247,23 @@ export function GroupsPage() {
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Input className="max-w-xs" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search groups…" aria-label="Search groups" />
           <div className="flex rounded-md border border-border text-xs">
-            {(['all', 'on', 'off'] as const).map((k) => (
+            {(['all', 'on', 'off', 'failed'] as const).map((k) => (
               <button
                 key={k}
                 type="button"
                 onClick={() => setShow(k)}
-                className={`px-3 py-1.5 ${show === k ? 'bg-muted font-medium' : 'text-muted-foreground'}`}
+                className={`px-3 py-1.5 ${show === k ? 'bg-muted font-medium' : 'text-muted-foreground'} ${k === 'failed' && failedCount ? 'text-red-500' : ''}`}
               >
-                {k === 'all' ? `All ${groups.length}` : k === 'on' ? `Enabled ${enabledCount}` : `Disabled ${groups.length - enabledCount}`}
+                {k === 'all' ? `All ${groups.length}` : k === 'on' ? `Enabled ${enabledCount}` : k === 'off' ? `Disabled ${groups.length - enabledCount}` : `Check failed ${failedCount}`}
               </button>
             ))}
           </div>
           <div className="ml-auto flex flex-wrap gap-2">
+            {failedCount > 0 && (
+              <Button size="sm" variant="outline" className="text-red-500" disabled={!!busy} onClick={recheckFailed} title="Run Check again on every group that failed, one by one">
+                {recheck ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />} {recheck ? `Checking ${recheck}` : `Check again failed (${failedCount})`}
+              </Button>
+            )}
             <Button size="sm" disabled={!!busy || groups.length === 0} onClick={enableRelevant}>
               {busy === 'ai' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} Enable relevant (AI)
             </Button>
@@ -242,11 +278,41 @@ export function GroupsPage() {
         {visible.length === 0 ? (
           <Empty>{groups.length ? 'No groups match.' : 'No groups yet. Click “Find my joined groups”.'}</Empty>
         ) : (
+          <>
+          <div className="flex items-center gap-3 border-b border-border pb-2 text-sm">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-primary"
+              checked={allVisibleSelected}
+              onChange={() => setSelected(allVisibleSelected ? new Set() : new Set(visible.map((g) => g.id)))}
+              aria-label="Select all shown groups"
+            />
+            <span className="text-muted-foreground">{chosen.length ? `${chosen.length} selected` : `Select all ${visible.length}`}</span>
+            {chosen.length > 0 && (
+              <>
+                <Button size="sm" variant="outline" className="text-red-500" onClick={deleteSelected}>
+                  <Trash2 className="h-3.5 w-3.5" /> Delete selected ({chosen.length})
+                </Button>
+                <button type="button" className="text-xs text-muted-foreground underline" onClick={() => setSelected(new Set())}>
+                  Clear
+                </button>
+              </>
+            )}
+          </div>
           <ul className="divide-y divide-border">
             {visible.map((g) => (
-              <GroupRow key={g.id} g={g} busy={busy} onRun={run} result={results[g.id]} />
+              <GroupRow
+                key={g.id}
+                g={g}
+                busy={busy}
+                onRun={run}
+                result={results[g.id]}
+                checked={selected.has(g.id)}
+                onToggle={() => setSelected((s) => { const n = new Set(s); if (n.has(g.id)) n.delete(g.id); else n.add(g.id); return n; })}
+              />
             ))}
           </ul>
+          </>
         )}
       </Card>
     </div>

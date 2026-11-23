@@ -41,26 +41,39 @@ export function commentBudget(s: Settings, posts: Post[], now: number): boolean 
 }
 
 /** Logs a skip reason only when it changes, so the log is not flooded every scheduler tick. */
-async function skipped(reason: string): Promise<void> {
+async function skipped(reason: string): Promise<string> {
   const prev = (await chrome.storage.local.get('commentsSkipReason')).commentsSkipReason;
-  if (prev === reason) return;
+  if (prev === reason) return reason;
   await chrome.storage.local.set({ commentsSkipReason: reason });
   await log('info', 'comments', `Automatic comments skipped: ${reason}`);
+  return reason;
 }
 
-let running: Promise<void> | undefined;
-export function automaticComments(now = Date.now(), deps: { router: RouterLike; scrape: typeof scrapeThreadsSearch } = { router: aiRouter, scrape: scrapeThreadsSearch }): Promise<void> {
-  if (running) return running;
-  running = run(now, deps).finally(() => { running = undefined; });
+type Deps = { router: RouterLike; scrape: typeof scrapeThreadsSearch };
+/** `force`: the user pressed "Comment now" — no time window, daily limit or gap; `ideaId`: search for that idea. */
+export type CommentRunOpts = { force?: boolean; ideaId?: string };
+const defaultDeps = (): Deps => ({ router: aiRouter, scrape: scrapeThreadsSearch });
+
+let running: Promise<string> | undefined;
+export function automaticComments(now = Date.now(), deps: Deps = defaultDeps(), opts: CommentRunOpts = {}): Promise<string> {
+  if (running) return opts.force ? Promise.resolve('A comment search is already running — try again in a minute') : running;
+  running = run(now, deps, opts).finally(() => { running = undefined; });
   return running;
 }
 
-async function run(now: number, deps: { router: RouterLike; scrape: typeof scrapeThreadsSearch }): Promise<void> {
+/** "Comment now" from the queue: search Threads right away and queue the reply to post immediately. */
+export function commentNow(ideaId?: string, deps: Deps = defaultDeps()): Promise<string> {
+  return automaticComments(Date.now(), deps, { force: true, ideaId });
+}
+
+async function run(now: number, deps: Deps, opts: CommentRunOpts = {}): Promise<string> {
   const s = await getSettings();
-  const reason = commentBlockReason(s, await db.posts.toArray(), now);
-  if (reason) return skipped(reason);
-  const last = Number((await chrome.storage.local.get('commentsLastScan')).commentsLastScan ?? 0);
-  if (now - last < 30 * 60_000) return;
+  if (!opts.force) {
+    const reason = commentBlockReason(s, await db.posts.toArray(), now);
+    if (reason) return skipped(reason);
+    const last = Number((await chrome.storage.local.get('commentsLastScan')).commentsLastScan ?? 0);
+    if (now - last < 30 * 60_000) return 'Searched less than 30 min ago';
+  }
   const account = await db.accounts.where('platform').equals('threads').first();
   const brand = s.activeBrandId ? await db.brands.get(s.activeBrandId) : await db.brands.toCollection().first();
   if (!account?.profileUrl) return skipped('No Threads account connected (Accounts page)');
@@ -68,7 +81,9 @@ async function run(now: number, deps: { router: RouterLike; scrape: typeof scrap
   await chrome.storage.local.remove('commentsSkipReason');
   const ownHandle = new URL(account.profileUrl).pathname.replace(/\/$/, '').toLowerCase();
   // Ideas the user picked for comments go before the regular topics.
-  const idea = (await commentIdeas())[0];
+  const ideas = await commentIdeas();
+  const idea = opts.ideaId ? ideas.find((i) => i.id === opts.ideaId) : ideas[0];
+  if (opts.ideaId && !idea) return 'That comment idea no longer exists';
   const topics = idea ? [commentQuery(idea.title, brand.industry)] : (await enabledTopics()).slice(0, 3);
   if (!topics.length) topics.push(brand.industry || 'bisnis laundry');
   await chrome.storage.local.set({ commentsLastScan: now });
@@ -77,7 +92,9 @@ async function run(now: number, deps: { router: RouterLike; scrape: typeof scrap
   if (!results.some((r) => r.posts.length)) {
     // Often a logged-out session: the idea keeps its chances, and the next one gets a turn.
     if (idea) await moveIdeaToBack(idea.id);
-    return void (await log('warn', 'comments', 'Threads search returned no posts (logged out of Threads, or search page changed?)'));
+    const m = 'Threads search returned no posts (logged out of Threads, or search page changed?)';
+    await log('warn', 'comments', m);
+    return m;
   }
   const seen = new Set((await db.posts.toArray()).map((p) => p.replyTo).filter(Boolean));
   const context = await buildBrandContext(brand.id);
@@ -100,17 +117,18 @@ async function run(now: number, deps: { router: RouterLike; scrape: typeof scrap
     const id = uid();
     const saved = await db.transaction('rw', db.posts, db.queue, async () => {
       const posts = await db.posts.toArray();
-      if (!commentBudget(freshSettings, posts, at) || posts.some((p) => p.replyTo === url || p.fingerprint === fp)) return false;
+      if ((!opts.force && !commentBudget(freshSettings, posts, at)) || posts.some((p) => p.replyTo === url || p.fingerprint === fp)) return false;
       await db.posts.add({ id, platform: 'threads', accountId: account.id, brandId: brand.id, text, replyTo: url, replyTargetText: candidate.text,
         mediaIds: [], status: 'scheduled', scheduledAt: at, fingerprint: fp, source: 'autopilot', attempts: 0, createdAt: at, updatedAt: at,
         title: `Reply: ${candidate.text.slice(0, 70)}` });
-      await db.queue.add({ id: uid(), kind: 'post', platform: 'threads', postId: id, runAt: at });
+      await db.queue.add({ id: uid(), kind: 'post', platform: 'threads', postId: id, runAt: at, ...(opts.force ? { immediate: true } : {}) });
       return true;
     });
     if (saved) await log('info', 'comments', `Relevant reply queued for ${url}`);
     if (saved && idea) await removeCommentIdea(idea.id);
-    return;
+    return saved ? `Reply queued for ${url} — posting now` : 'A reply for that post already exists';
   }
   if (idea) await markIdeaSearched(idea.id);
   await log('info', 'comments', 'Search completed; no new sufficiently relevant reply found');
+  return 'No relevant Threads post found this time — try again later';
 }
