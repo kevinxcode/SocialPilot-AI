@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { formatInTimeZone } from 'date-fns-tz';
-import { Badge, Button, Empty, Select, Tabs, useToast } from '@/components/ui';
-import { CheckCircle2, ListOrdered, Loader2, Pause, Play, Send, X } from 'lucide-react';
+import { Badge, Button, Empty, Select, Table, Tabs, useToast } from '@/components/ui';
+import { CheckCircle2, LayoutGrid, List, ListOrdered, Loader2, Pause, Play, Send, X } from 'lucide-react';
 import { sendToSw } from '@/background/messages';
 import { autoReorder, cancel, markPublishedByUser, setPaused } from '@/services/publishing/PublishingQueue';
 import { useSettings } from '@/hooks/useSettings';
@@ -26,9 +26,13 @@ export function queueRank(p: Post, autopilotHeld = false): number {
 
 type View = 'queue' | 'drafts' | 'history';
 
-function PostMedia({ ids }: { ids: string[] }) {
+type Layout = 'grid' | 'list';
+const LAYOUT_KEY = 'queueLayout';
+
+function PostMedia({ ids, compact = false }: { ids: string[]; compact?: boolean }) {
   const key = ids.join('|');
   const media = useLiveQuery(async () => (ids.length ? (await db.media.bulkGet(ids)).filter((m): m is MediaItem => !!m) : []), [key]) ?? [];
+  if (compact) return media[0] ? <MediaThumb m={media[0]} className="h-12 w-12 shrink-0 rounded" /> : <div className="h-12 w-12 shrink-0 rounded bg-muted" />;
   if (!media.length) return null;
   return (
     <div className={`grid gap-0.5 bg-muted ${media.length > 1 ? 'grid-cols-2' : ''}`}>
@@ -147,6 +151,46 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
   }, []);
   const showCommentIdeas = view === 'queue' && ideas.length > 0 && (!platform || platform === 'threads') && !status;
   const commentBlock = settings ? commentBlockReason(settings, posts, Date.now()) : null;
+  const [layout, setLayoutState] = useState<Layout>(() => (localStorage.getItem(LAYOUT_KEY) === 'list' ? 'list' : 'grid'));
+  const setLayout = (l: Layout) => {
+    setLayoutState(l);
+    localStorage.setItem(LAYOUT_KEY, l);
+  };
+  const postCheckbox = (p: Post) => (
+    <input
+      type="checkbox"
+      aria-label={`Select post ${p.text.slice(0, 30)}`}
+      disabled={!selectable(p)}
+      title={selectable(p) ? undefined : 'Being published right now'}
+      checked={selected.has(p.id)}
+      onClick={(e) => e.stopPropagation()}
+      onChange={() => toggle(p.id)}
+      className="h-4 w-4 cursor-pointer accent-primary disabled:cursor-not-allowed"
+    />
+  );
+  const postInfo = (p: Post) => (
+    <>
+      {p.url ? (
+        <a href={p.url} target="_blank" rel="noreferrer" className="text-primary underline" onClick={(e) => e.stopPropagation()}>
+          open post
+        </a>
+      ) : null}
+      {p.engagement != null && (
+        <span className="ml-2" title="Likes + replies + reposts, read from your Threads profile">
+          ♥ {p.engagement}
+        </span>
+      )}
+      {!p.url &&
+        (() => {
+          const d = postDetail(p, fmt, apHeld);
+          return (
+            <span className={d.tone === 'error' ? 'text-red-500' : d.tone === 'warn' ? 'text-amber-500' : ''} title={d.text}>
+              {d.text}
+            </span>
+          );
+        })()}
+    </>
+  );
 
   return (
     <div className="space-y-4">
@@ -161,6 +205,22 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
           ]}
         />
         <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex h-9 overflow-hidden rounded-md border border-border" role="radiogroup" aria-label="Queue layout">
+            {([['grid', 'Grid view', LayoutGrid], ['list', 'List view', List]] as const).map(([value, name, Icon]) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-label={name}
+                aria-checked={layout === value}
+                title={name}
+                onClick={() => setLayout(value)}
+                className={`flex w-9 items-center justify-center ${layout === value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`}
+              >
+                <Icon className="h-4 w-4" />
+              </button>
+            ))}
+          </div>
           {view === 'queue' && (
             <Button
               variant="outline"
@@ -231,7 +291,7 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
               {commentBlock ? `On hold: ${commentBlock}` : 'The AI searches Threads for these next. A reply appears in the queue once it finds a relevant post.'}
             </p>
           </div>
-          <div className="grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className={layout === 'grid' ? 'grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3' : 'grid gap-2'}>
             {ideas.map((i) => (
               <article key={i.id} className="rounded-lg border border-border bg-card p-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
@@ -266,6 +326,41 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
               Select all
             </label>
           )}
+          {layout === 'list' ? (
+            <Table>
+              <thead>
+                <tr>
+                  {view === 'queue' && <th className="w-8" aria-label="Select" />}
+                  <th>Post</th>
+                  <th>{view === 'history' ? 'When' : 'Scheduled'}</th>
+                  <th>Platform</th>
+                  <th>Status</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((p) => (
+                  <tr key={p.id} className={`cursor-pointer hover:bg-muted/50 ${selected.has(p.id) ? 'bg-primary/5' : ''} ${isOnHold(p, apHeld) ? '[&>td:not(:first-child)]:opacity-60' : ''}`} onClick={() => setOpen(p)}>
+                    {view === 'queue' && <td>{postCheckbox(p)}</td>}
+                    <td className="max-w-md">
+                      <div className="flex items-center gap-2">
+                        <PostMedia ids={p.mediaIds} compact />
+                        <span className="line-clamp-2 break-words" title={p.text}>{p.text}</span>
+                      </div>
+                    </td>
+                    <td className="whitespace-nowrap">{fmt(view === 'history' ? (p.publishedAt ?? p.updatedAt) : p.scheduledAt)}</td>
+                    <td className="whitespace-nowrap">
+                      {platformLabel(p.platform)}
+                      {p.replyTo ? ' · Reply' : ''}
+                      {p.topic ? <div className="text-xs text-muted-foreground">{p.topic}</div> : null}
+                    </td>
+                    <td><span className="whitespace-nowrap"><StatusBadge post={p} autopilotHeld={apHeld} /></span></td>
+                    <td className="max-w-xs text-xs text-muted-foreground"><div className="line-clamp-2">{postInfo(p)}</div></td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          ) : (
           <div className="grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {shown.map((p) => (
               <article
@@ -274,18 +369,7 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
                 onClick={() => setOpen(p)}
               >
                 <div className="flex items-center gap-2 border-b border-border p-2.5">
-                  {view === 'queue' && (
-                    <input
-                      type="checkbox"
-                      aria-label={`Select post ${p.text.slice(0, 30)}`}
-                      disabled={!selectable(p)}
-                      title={selectable(p) ? undefined : 'Being published right now'}
-                      checked={selected.has(p.id)}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={() => toggle(p.id)}
-                      className="h-4 w-4 cursor-pointer accent-primary disabled:cursor-not-allowed"
-                    />
-                  )}
+                  {view === 'queue' && postCheckbox(p)}
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">
                       {platformLabel(p.platform)}
@@ -307,30 +391,11 @@ export function ScheduledPostsPage({ initialView = 'queue', lockPlatform }: { in
                     <p className="whitespace-pre-wrap break-words text-sm">{p.text}</p>
                   </div>
                 </div>
-                <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
-                  {p.url ? (
-                    <a href={p.url} target="_blank" rel="noreferrer" className="text-primary underline" onClick={(e) => e.stopPropagation()}>
-                      open post
-                    </a>
-                  ) : null}
-                  {p.engagement != null && (
-                    <span className="ml-2" title="Likes + replies + reposts, read from your Threads profile">
-                      ♥ {p.engagement}
-                    </span>
-                  )}
-                  {!p.url &&
-                    (() => {
-                      const d = postDetail(p, fmt, apHeld);
-                      return (
-                        <span className={d.tone === 'error' ? 'text-red-500' : d.tone === 'warn' ? 'text-amber-500' : ''} title={d.text}>
-                          {d.text}
-                        </span>
-                      );
-                    })()}
-                </div>
+                <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">{postInfo(p)}</div>
               </article>
             ))}
           </div>
+          )}
         </>
       )}
       {list.length > 0 && list.length <= limit && (

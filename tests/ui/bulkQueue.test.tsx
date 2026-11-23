@@ -77,6 +77,23 @@ test('a queue card shows the full text, image and the post a reply answers', asy
   expect(screen.getByLabelText(/select post teks p2/i).closest('article')!.textContent).toContain('Post yang dibalas');
 });
 
+test('Grid and List views show the same posts, keep selection working, and the choice is remembered', async () => {
+  localStorage.removeItem('queueLayout');
+  const first = show();
+  expect((await screen.findByLabelText(/select post teks p1/i)).closest('article')).toBeTruthy();
+  fireEvent.click(screen.getByRole('radio', { name: 'List view' }));
+  const box = await screen.findByLabelText(/select post teks p1/i);
+  expect(box.closest('tr')).toBeTruthy();
+  fireEvent.click(box);
+  expect(screen.getByText('1 selected')).toBeTruthy();
+  first.unmount();
+  show();
+  expect((await screen.findByLabelText(/select post teks p2/i)).closest('tr')).toBeTruthy();
+  fireEvent.click(screen.getByRole('radio', { name: 'Grid view' }));
+  expect((await screen.findByLabelText(/select post teks p2/i)).closest('article')).toBeTruthy();
+  localStorage.removeItem('queueLayout');
+});
+
 test('comment ideas waiting are listed with the reason and can be removed', async () => {
   vi.spyOn(window, 'confirm').mockReturnValue(true);
   await chrome.storage.local.set({ commentIdeas: [{ id: 'i1', title: 'Ide komentar laundry', body: 'Isi ide' }] });
