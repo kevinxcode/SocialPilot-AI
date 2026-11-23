@@ -160,6 +160,8 @@ export async function runPublish(cfg: PlatformSelectors, input: PublishInput, o:
     topicSet = !topicIssue;
   }
   if (input.dryRun) return { status: 'dry-run', topicIssue };
+  // Threads posts always carry their topic: nothing has been posted yet, so the queue can safely retry.
+  if (topicIssue) return { status: 'failed', reason: `Topic "${input.topic}" not set, post held: ${topicIssue}` };
 
   await humanDelay(d, 800, 1600);
   const next = cfg.nextButton && findBySelectors(cfg.nextButton, dialog);

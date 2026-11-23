@@ -58,7 +58,7 @@ export const deps: QueueDeps = {
   notify: (t, m) => notify(t, m),
   loadMedia,
   runSlot: (item, now) => autopilotHooks.runSlot(item, now, { notify }),
-  pickTopic: async (post) => ((await getSettings()).autoTopic ? topicForPost(post, aiRouter) : undefined),
+  pickTopic: (post) => topicForPost(post, aiRouter),
   canPublish: () => holdsPublisherLease(),
   // A post whose image is not on this computer: the AI picks the best-fitting image from this computer's Media Library.
   replaceMissingMedia: async (post) => {
@@ -243,7 +243,7 @@ async function handle(msg: SwRequest): Promise<SwResponse> {
         createdAt: now,
         updatedAt: now,
       };
-      if (msg.platform === 'threads' && (await getSettings()).autoTopic) temp.topic = await topicForPost(temp, aiRouter).catch(() => undefined);
+      if (msg.platform === 'threads') temp.topic = await topicForPost(temp, aiRouter).catch(() => undefined);
       const r = await publishers[msg.platform].publish(temp, await loadMedia(temp.mediaIds), { dryRun: true });
       await log('info', 'dry-run', `${msg.platform}: ${r.status}${'reason' in r && r.reason ? ` — ${r.reason}` : ''}`);
       return r.status === 'dry-run'

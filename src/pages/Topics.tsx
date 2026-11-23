@@ -52,10 +52,7 @@ export function TopicsPage() {
           Before each Threads post the AI picks one topic (the “Community or topic” field), preferring enabled topics below. New topics the AI
           chooses are added here automatically — disable or delete the ones you don’t want.
         </p>
-        <div className="mb-3 flex items-center gap-2 text-sm">
-          <Switch checked={!!settings?.autoTopic} onChange={(v) => update({ autoTopic: v })} label="Auto topic" />
-          Auto-pick a topic for every Threads post
-        </div>
+        <p className="mb-3 text-sm font-medium">Every Threads post needs a topic. If none can be set, the post is held and retried instead of going out without one.</p>
         <div className="flex flex-wrap gap-2">
           <Input className="max-w-xs" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Bisnis Laundry" />
           <Button variant="outline" onClick={add}>

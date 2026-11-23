@@ -8,6 +8,7 @@ import { generateVariations, type RouterLike } from './generate';
 import { validatePost } from './validate';
 import { createDraft } from '@/services/publishing/posts';
 import { schedulePost } from '@/services/publishing/PublishingQueue';
+import { rankGroups } from '@/services/publishing/groupRotation';
 import type { Platform } from '@/types/models';
 
 /** Next allowed times: ≥ start, spaced by gapMs, only inside [windowStart, windowEnd] in tz. */
@@ -35,11 +36,12 @@ export async function queueIdeas(
 ): Promise<{ queued: number; failed: string[]; queuedIds: string[] }> {
   const s = await getSettings();
   const now = opts.now ?? Date.now();
-  const groups = opts.platform === 'fbgroup' ? (await db.groups.toArray()).filter((g) => g.enabled) : [];
+  const existing = await db.posts.where('platform').equals(opts.platform).toArray();
+  // Longest-waiting groups first, so each batch continues where the last one stopped.
+  const groups = opts.platform === 'fbgroup' ? rankGroups(await db.groups.toArray(), existing) : [];
   if (opts.platform === 'fbgroup' && !groups.length) throw new Error('No enabled Facebook Group — switch some on in Grup Facebook first');
   const gapMs = (opts.platform === 'fbgroup' ? s.groupGapMinutes : s.minGapMinutes) * 60_000;
   // Start after everything already scheduled/published on this platform.
-  const existing = await db.posts.where('platform').equals(opts.platform).toArray();
   const latest = Math.max(
     0,
     ...existing.filter((p) => p.status === 'scheduled' && p.scheduledAt).map((p) => p.scheduledAt!),

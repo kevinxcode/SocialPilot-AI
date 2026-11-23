@@ -13,6 +13,7 @@ import { pickMedia, pickMediaForText } from '@/services/media/pick';
 import { pickRecyclable } from './insights';
 import { createDraft } from '@/services/publishing/posts';
 import { cancel, schedulePost } from '@/services/publishing/PublishingQueue';
+import { nextGroup } from '@/services/publishing/groupRotation';
 import { aiRouter } from '@/services/ai/AIRouter';
 import type { FbGroup, Platform, ProviderId, QueueItem } from '@/types/models';
 import { platformLabel } from '@/lib/platform';
@@ -164,18 +165,8 @@ export async function runSlot(item: QueueItem, now: number, ctx: RunnerCtx): Pro
 }
 
 
-/** Enabled group with the oldest last post, excluding groups posted to (or scheduled) in the last 24 h. */
 async function pickGroup(now: number): Promise<FbGroup | undefined> {
-  const groups = (await db.groups.toArray()).filter((g) => g.enabled);
-  const posts = await db.posts.where('platform').equals('fbgroup').toArray();
-  const lastAt = (g: FbGroup) =>
-    Math.max(
-      0,
-      ...posts
-        .filter((p) => p.groupId === g.id && (p.status === 'published' || p.status === 'scheduled'))
-        .map((p) => p.publishedAt ?? p.scheduledAt ?? 0),
-    );
-  return groups.filter((g) => now - lastAt(g) >= 24 * 60 * 60_000).sort((x, y) => lastAt(x) - lastAt(y))[0];
+  return nextGroup(await db.groups.toArray(), await db.posts.where('platform').equals('fbgroup').toArray(), now);
 }
 
 export async function reviewDecision(postId: string, approve: boolean, ctx: RunnerCtx): Promise<void> {

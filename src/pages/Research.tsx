@@ -22,6 +22,7 @@ import type { Language } from "@/types/models";
 import { getActiveBrandId } from "./BrandKnowledge";
 import { IDEA_JOB_KEY, jobIsLive, type IdeaJob } from "@/services/content/ideasToQueue";
 import { sendToSw } from "@/background/messages";
+import { addCommentIdeas } from "@/services/autopilot/commentIdeas";
 import type { Platform } from "@/types/models";
 
 export function htmlToText(html: string): string {
@@ -60,6 +61,7 @@ export function ResearchPage() {
     [];
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [qPlatforms, setQPlatforms] = useState<Set<Platform>>(new Set<Platform>(["threads"]));
+  const [qComment, setQComment] = useState(false);
   const [removeAfter, setRemoveAfter] = useState(true);
   const [queuing, setQueuing] = useState<number | null>(null);
   const allChecked = ideas.length > 0 && ideas.every((i) => sel.has(i.id));
@@ -82,16 +84,25 @@ export function ResearchPage() {
     const ids = ideas.filter((i) => sel.has(i.id)).map((i) => i.id);
     if (!ids.length) return;
     const platforms = [...qPlatforms];
-    if (!platforms.length) return toast("Pick at least one platform", "err");
-    if (
-      !confirm(
-        `Generate and schedule ${ids.length * platforms.length} posts (${ids.length} ideas × ${platforms.join(", ")}), spaced by the minimum gap inside the autopilot window?`,
-      )
-    )
-      return;
-    const r = await sendToSw({ type: "queueIdeas", ids, platforms, removeAfter });
-    if (!r.ok) return toast(r.message ?? "Could not start", "err");
-    toast("Running in the background — you can switch menus");
+    if (!platforms.length && !qComment) return toast("Pick at least one platform", "err");
+    const parts = [
+      platforms.length ? `Generate and schedule ${ids.length * platforms.length} posts (${ids.length} ideas × ${platforms.join(", ")}), spaced by the minimum gap inside the autopilot window.` : "",
+      qComment ? `Use ${ids.length} ideas for AI comments on relevant Threads posts. Comments are sent automatically, within the limit of ${settings?.comments.dailyLimit ?? 3} per day.` : "",
+    ];
+    if (!confirm(`${parts.filter(Boolean).join("\n\n")}\n\nContinue?`)) return;
+    if (platforms.length) {
+      const r = await sendToSw({ type: "queueIdeas", ids, platforms, removeAfter });
+      if (!r.ok) return toast(r.message ?? "Could not start", "err");
+    }
+    if (qComment) {
+      await addCommentIdeas(ideas.filter((i) => sel.has(i.id)).map((i) => ({ id: i.id, title: i.title, body: i.body })));
+      if (!platforms.length && removeAfter) await db.ideas.bulkDelete(ids);
+    }
+    const blocked = qComment && settings
+      ? !settings.comments.enabled ? "Automatic comments are off in Settings" : !settings.autopilot.enabled || settings.autopilot.paused ? "Autopilot is off or paused" : !settings.autopilot.platforms.threads ? "Threads is off in Autopilot" : ""
+      : "";
+    if (blocked) toast(`Ideas saved for comments, but they will wait: ${blocked}`, "err");
+    else toast(platforms.length ? "Running in the background — you can switch menus" : "Ideas added to the comment list");
     setSel(new Set());
   };
 
@@ -314,6 +325,15 @@ Source: ${url}` : "";
                   {label}
                 </label>
               ))}
+              <label className="flex items-center gap-1.5" title="AI finds relevant Threads posts for these ideas and replies automatically, within the daily comment limit">
+                <input
+                  type="checkbox"
+                  checked={qComment}
+                  onChange={() => setQComment((v) => !v)}
+                  aria-label="Use for Threads comments"
+                />
+                Comment (Threads)
+              </label>
             </div>
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <input type="checkbox" checked={removeAfter} onChange={() => setRemoveAfter((v) => !v)} aria-label="Remove ideas after queuing" />
@@ -326,7 +346,7 @@ Source: ${url}` : "";
               {queuing !== null && <Loader2 className="h-4 w-4 animate-spin" />}
               {queuing !== null
                 ? `Generating… ${queuing}/${job?.total ?? 0}`
-                : `Add to queue (${sel.size * qPlatforms.size})`}
+                : `Add to queue (${sel.size * (qPlatforms.size + Number(qComment))})`}
             </Button>
             <Button
               variant="outline"

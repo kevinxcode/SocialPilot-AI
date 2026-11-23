@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { FolderOpen, Loader2, Trash2, Upload } from 'lucide-react';
+import { FolderOpen, Link2, Loader2, Trash2, Upload } from 'lucide-react';
 import { Badge, Button, Card, Dialog, Empty, Input, Select, useToast } from '@/components/ui';
 import { db } from '@/services/storage/db';
 import { importFiles } from '@/services/media/importer';
+import { DRIVE_LINK_KEY, DRIVE_ORIGINS, parseDriveLink, syncDriveLink } from '@/services/media/driveSync';
 import type { MediaItem } from '@/types/models';
 
 export const SUGGESTED_FOLDER = 'C:\\locale\\intelij\\londy-artifacts-marketing\\app-marketing';
@@ -34,6 +35,11 @@ export function MediaLibraryPage() {
   const [edit, setEdit] = useState<MediaItem | null>(null);
   const [tagText, setTagText] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const [driveLink, setDriveLink] = useState('');
+  const [driveBusy, setDriveBusy] = useState<string | null>(null);
+  useEffect(() => {
+    void chrome.storage.local.get(DRIVE_LINK_KEY).then((v) => setDriveLink((v[DRIVE_LINK_KEY] as string | undefined) ?? ''));
+  }, []);
 
   const categories = useMemo(() => [...new Set(media.map((m) => m.category).filter(Boolean))] as string[], [media]);
   const filtered = media.filter((m) => {
@@ -54,6 +60,24 @@ export function MediaLibraryPage() {
       if ((e as Error).name !== 'AbortError') toast((e as Error).message, 'err');
     } finally {
       setBusy(null);
+    }
+  };
+  const syncDrive = async () => {
+    const link = driveLink.trim();
+    if (!parseDriveLink(link)) return toast('Paste a Google Drive folder or file link', 'err');
+    // Asked on click: Chrome only shows this prompt during a user action.
+    if (!(await chrome.permissions.request({ origins: DRIVE_ORIGINS }))) return toast('Permission to read Google Drive was not granted', 'err');
+    setDriveBusy('0');
+    try {
+      await chrome.storage.local.set({ [DRIVE_LINK_KEY]: link });
+      const r = await syncDriveLink(link, { onProgress: (done, total) => setDriveBusy(`${done}/${total}`) });
+      const summary = `Drive: added ${r.added} · duplicates ${r.duplicates} · skipped ${r.skipped}`;
+      if (r.failed.length) toast(`${summary} · failed ${r.failed.length} (${r.failed[0]})`, 'err');
+      else toast(summary);
+    } catch (e) {
+      toast((e as Error).message, 'err');
+    } finally {
+      setDriveBusy(null);
     }
   };
   const pickFolder = async () => {
@@ -139,6 +163,20 @@ export function MediaLibraryPage() {
           <span className="w-full text-xs text-muted-foreground">
             or drag & drop files/folders here. Suggested folder: <code>{SUGGESTED_FOLDER}</code>
           </span>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Input
+            className="min-w-64 flex-1"
+            value={driveLink}
+            onChange={(e) => setDriveLink(e.target.value)}
+            placeholder="Public Google Drive folder link"
+            aria-label="Google Drive link"
+          />
+          <Button variant="outline" onClick={syncDrive} disabled={busy !== null || driveBusy !== null || !driveLink.trim()}>
+            {driveBusy !== null ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+            {driveBusy !== null ? `Syncing… ${driveBusy}` : 'Sync Drive'}
+          </Button>
+          <span className="w-full text-xs text-muted-foreground">Folder must be shared as “Anyone with the link”. Each sync adds only new files, including subfolders.</span>
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-[1fr_200px_160px]">
           <Input placeholder="Search name or tag…" value={q} onChange={(e) => setQ(e.target.value)} />

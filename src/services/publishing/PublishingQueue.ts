@@ -448,7 +448,18 @@ async function processPostItem(item: QueueItem, now: number, minGapMinutes: numb
       await setPost(post.id, { topic });
       await log('info', 'topic', `Threads topic: ${topic}`);
     } else {
-      await log('warn', 'topic', 'No topic chosen (AI unavailable and the topic list is empty)');
+      // Every Threads post needs a topic. Nothing was posted, so hold it and try again.
+      const reason = 'No Threads topic could be chosen (AI unavailable), post held. Set a topic on the post or check the AI provider.';
+      const tries = post.attempts + 1;
+      const retryAt = nextRetryAt(tries, now);
+      await log('warn', 'topic', reason);
+      if (retryAt) {
+        await setPost(post.id, { status: ambiguous ? 'verifying' : 'scheduled', attempts: tries, error: reason, nextRetryAt: retryAt });
+        await release(item.id, retryAt);
+      } else {
+        await fail(item, { ...post, attempts: tries }, reason, deps, now);
+      }
+      return;
     }
   }
 

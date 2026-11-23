@@ -118,6 +118,15 @@ test('Threads publish types text, attaches image and clicks Post', async () => {
   expect(onPost).toHaveBeenCalledWith(text);
 });
 
+test('Threads: a topic that cannot be set stops the post before Post is clicked', async () => {
+  load(fx('threads/profile-own.html'));
+  const onPost = wireComposer(fx('threads/composer.html'));
+  const r = await runPublish(THREADS, { text: 'Tes topik', files: [], dryRun: false, topic: 'Laundry Threads' }, FAST);
+  expect(r.status).toBe('failed');
+  expect((r as { reason: string }).reason).toMatch(/Laundry Threads/);
+  expect(onPost).not.toHaveBeenCalled();
+});
+
 test('dry run fills composer and does not click Post', async () => {
   load(fx('threads/profile-own.html'));
   const onPost = wireComposer(fx('threads/composer.html'));
